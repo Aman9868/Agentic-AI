@@ -1,0 +1,830 @@
+{
+  "name": "Ecommerce Chat",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "5cc8db61-4bb7-42b9-a9be-330d243c1dc0",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1728,
+        1824
+      ],
+      "id": "ec4433c4-ec89-4790-a339-4dc21dacb258",
+      "name": "Webhook",
+      "webhookId": "5cc8db61-4bb7-42b9-a9be-330d243c1dc0"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a language detection service.\n\nTasks:\n1. Detect the language of the user message.\n2. Return the cleaned user query exactly as written (do not translate).\n\nRules:\n- Return ONLY raw JSON.\n- Do NOT use markdown.\n- Do NOT add explanations.\n\nOutput format:\n{\n  \"language\": \"<ISO_CODE>\",\n  \"query\": \"<original user message>\"\n}\n\nSupported languages:\n- en (English)\n- hi (Hindi)\n- pa (Punjabi)\n\nUser message:\n  {{$json.body.question}}\n",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -1392,
+        1616
+      ],
+      "id": "74765f07-9957-4122-a73e-414e6efe0926",
+      "name": "Lanuagge Detection"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        352,
+        768
+      ],
+      "id": "6802daae-b7bf-4d57-91d8-6f7865dcc0b9",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ba527e32-1ac2-4355-a725-849803ff7192",
+              "name": "body.question",
+              "value": "={{ $json.body.question }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1232,
+        1920
+      ],
+      "id": "7d5a19a8-9e22-477b-bdd4-a9680a403d6b",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an intelligent shopping assistant.\n\nUser language: {{$json.output.parseJson().language}}\nUser Question: {{ $json.output.parseJson().query }}\n\nTASKS:\n\n1. Detect intent\n2. Extract product name (if any)\n3. Extract quantity (if any)\n4. Decide next action\n5. Detect whether the input is a question\n\nIMPORTANT INTENT RULES (MUST FOLLOW):\n\n* If the user asks about a SPECIFIC product by name (e.g., description, details, price, usage, benefits), the intent MUST be SEARCH_PRODUCT.\n* If the user asks to buy or add a product, intent MUST be ADD_TO_CART.\n* If the user asks for suggestions without naming a product, intent MUST be RECOMMEND_PRODUCTS.\n* Use GENERAL_QUERY ONLY if the question is NOT related to any product.\n\nNEXT ACTION RULES:\n\n* SEARCH_PRODUCT → FETCH_PRODUCT_DETAILS\n* ADD_TO_CART → ADD_ITEM\n* VIEW_CART → SHOW_CART\n* RECOMMEND_PRODUCTS → SHOW_RECOMMENDATIONS\n* GENERAL_QUERY → ANSWER_QUERY\n\nReturn ONLY valid JSON with a FLATTENED structure.\nDo NOT add explanations.\n\nFields (use exactly these names):\n\n* intent\n* product_name\n* quantity\n* next_action\n* user_question\n* is_question\n",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -1488,
+        1232
+      ],
+      "id": "544ce2e5-4919-4010-b0b4-0ce04f366774",
+      "name": "Shopping Agent"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json[\"intent\"]}}",
+                    "rightValue": "=ADD_TO_CART",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "65bf8e84-15e6-4905-84ec-afe4121fb872"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": "=ADD_TO_CART"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "abe7f232-080f-4bf1-81fa-3ee9bdc65669",
+                    "leftValue": "={{$json[\"intent\"]}}",
+                    "rightValue": "=SEARCH_PRODUCT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": "=SEARCH_PRODUCT"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "51f8c1aa-84ff-41be-9dd2-d23bc29f6ed1",
+                    "leftValue": "={{$json[\"intent\"]}}",
+                    "rightValue": "VIEW_CART",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": "=VIEW_CART"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "de33d2ee-8534-4032-84d7-46da21da2265",
+                    "leftValue": "={{$json[\"intent\"]}}",
+                    "rightValue": "RECOMMEND_PRODUCTS",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": "=RECOMMEND_PRODUCT"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "ca2e89f6-e75a-434d-9651-d92406d3209b",
+                    "leftValue": "={{$json[\"intent\"]}}",
+                    "rightValue": "GENERAL_QUERY",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "looseTypeValidation": "",
+        "options": {
+          "ignoreCase": true,
+          "allMatchingOutputs": false
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -1664,
+        912
+      ],
+      "id": "0c8d4396-773b-4c98-99d6-1c8654514a44",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an intelligent shopping assistant specialized in answering user questions.\n\nUser Question: {{$json.user_question}}\n\nYour Task:\n- Provide a clear, concise, and accurate answer to the user's question.\n- Return ONLY the answer as plain text (no JSON, no explanations, no extra fields).\n\nExample:\n\nUser Question: \"Neem oil kya hota hai?\"\nAnswer: \"Neem oil is a natural extract from neem tree seeds, commonly used as a pesticide and in organic farming.\"\n",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -672,
+        1600
+      ],
+      "id": "02b719e5-e18e-4c2d-b651-cac773fa263f",
+      "name": "General Query"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-120b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        -1376,
+        1808
+      ],
+      "id": "c2285d58-2b99-4037-82c1-7b721d88632b",
+      "name": "Groq Chat Model"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-120b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        -1472,
+        1456
+      ],
+      "id": "592e08f7-487d-4cd4-a003-de1c8a7d3dbd",
+      "name": "Groq Chat Model1"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-120b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        -768,
+        1776
+      ],
+      "id": "e358c50e-f9e9-4c53-bee9-22f973600538",
+      "name": "Groq Chat Model2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process all incoming items\nreturn $input.all().map(item => {\n    try {\n        // Access the stringified JSON in 'output'\n        const rawOutput = item.json.output;\n\n        // Remove extra escapes and parse it into real JSON\n        const parsedData = JSON.parse(rawOutput);\n\n        // Flatten function (for nested objects, if any)\n        function flattenObject(obj, parentKey = '', result = {}) {\n            for (let key in obj) {\n                if (!obj.hasOwnProperty(key)) continue;\n                const newKey = parentKey ? `${parentKey}_${key}` : key;\n                if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {\n                    flattenObject(obj[key], newKey, result);\n                } else {\n                    result[newKey] = obj[key];\n                }\n            }\n            return result;\n        }\n\n        const flattenedData = flattenObject(parsedData);\n\n        // Return flattened JSON\n        return { json: flattenedData };\n\n    } catch (error) {\n        // Handle any parsing errors\n        return { json: { error: `Failed to parse output: ${error.message}`, raw: item.json.output } };\n    }\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1760,
+        1520
+      ],
+      "id": "e3e88f6e-4072-4b2b-9d3f-f93e2e1de4df",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "collection": "products",
+        "options": {
+          "limit": 1,
+          "projection": "{\n  \"ProductDescription\": 1,\n  \"shortDescription\":1,\n  \"Mrp\": 1,\n  \"discount\": 1,\n  \"name\": 1,\n  \"modelNo\": 1,\n  \"_id\": 1\n}\n"
+        },
+        "query": "={\n  \"$or\": [\n    { \"name\": \"{{$json.product_name}}\" },\n    { \"modelNo\": \"{{$json.product_name}}\" }\n  ]\n}\n"
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.2,
+      "position": [
+        -1168,
+        816
+      ],
+      "id": "0d10a1c7-95a5-4582-afdc-29353d95a541",
+      "name": "Seacrh Products",
+      "alwaysOutputData": true,
+      "credentials": {
+        "mongoDb": {
+          "id": "mrgQV000UEm1qhfs",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You will receive product data from the previous node using expressions.\n\nAvailable product details (any field may be empty, null, or missing):\n\nProduct Description: {{ $json.ProductDescription }}\nShort Description: {{ $json.shortDescription }}\nProduct Name: {{ $json.name }}\nModel Number: {{ $json.modelNo }}\nMRP: {{ $json.Mrp }}\nDiscount: {{ $json.discount }}\nProduct URL: [https://www.techmechelec.com/product/{{ $json._id }}\n\nIMPORTANT CONDITION (MANDATORY):\nIf **BOTH** the product name **AND** the model number are empty, null, or undefined, return **exactly** the following text and nothing else:\n\nNo Product found\n\nTASK (ONLY if the product exists):\n\nGenerate **one clear, accurate, human-friendly chatbot reply** describing the product.\n\nRules you MUST follow:\n\n* Use ONLY the information provided above\n* Do NOT invent, guess, or assume anything\n* Do NOT ask questions\n* Do NOT return JSON\n* Do NOT use bullet points, lists, or headings\n* Do NOT mention field names, databases, or technical sources\n* Keep the language natural, simple, and conversational\n* If descriptions are long, summarize them in plain language\n* Naturally mention the product name, model number, MRP in INR, discount percentage, and key features\n* Smoothly include the product URL at the end so the user can view more details\n* You MAY use line breaks to improve readability\n* Separate logical parts of the response using a single blank line only\n\nReturn **ONLY** the final plain-text chatbot response.\nDo not add explanations, formatting labels, or extra text.\n",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -720,
+        528
+      ],
+      "id": "5e24b55f-e430-4e23-a545-f19698a6948f",
+      "name": "Give FInd Prodcut ANSWER"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-120b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        -768,
+        800
+      ],
+      "id": "5f0d5a98-3d39-4fcd-8db5-a44680681702",
+      "name": "Groq Chat Model3"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1fd1e339-0e3e-472d-8fdc-31dcea63eaae",
+              "leftValue": "={{$json.name}}",
+              "rightValue": "=true",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -976,
+        800
+      ],
+      "id": "5bec15c7-3167-42da-969b-e51fb1a1c733",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"output\": \"Sorry, no product found based on given query\",\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -688,
+        896
+      ],
+      "id": "e5341802-22f8-4371-a5a3-251c046be82e",
+      "name": "when no Product Found"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://techmechelec.space/api/v1/web/addtocart",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2OTZiYTI5YTA1OGJiZDRlZmMxMmM4ZjgiLCJpYXQiOjE3Njg2NjE2NjYsImV4cCI6MTc4NDY0NTY2Nn0.xjT_a7BqTkEvXDp7ut3jrsdT9QwRqnaSdoVlITySFcw"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "product",
+              "value": "={{ $json.product }}"
+            },
+            {
+              "name": "quantity",
+              "value": "={{ $json.quantity }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -624,
+        192
+      ],
+      "id": "21b9441a-0666-4541-aebe-78e46b338a9c",
+      "name": "Add to Cart Request",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "collection": "products",
+        "options": {
+          "limit": 1,
+          "projection": "{\n  \"_id\": 1\n}\n"
+        },
+        "query": "={\n  \"$or\": [\n    { \"name\": \"{{$json.product_name}}\" },\n    { \"modelNo\": \"{{$json.product_name}}\" }\n  ]\n}\n"
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.2,
+      "position": [
+        -1456,
+        464
+      ],
+      "id": "d72446c6-982d-4864-9e41-dc9f927ca5bd",
+      "name": "Seacrh Products1",
+      "alwaysOutputData": true,
+      "credentials": {
+        "mongoDb": {
+          "id": "mrgQV000UEm1qhfs",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "          ADD_CART\n\n1.First Find Product ID based on product name itself.\n\n2Secodn based on qunaity coming from switch nod eistelf"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -128,
+        208
+      ],
+      "typeVersion": 1,
+      "id": "572b05b4-263b-4240-ab1a-053d3c70b046",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1088,
+        416
+      ],
+      "id": "b2218200-992d-451d-9897-bb48e55164dc",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// MongoDB result (contains _id)\nconst productItem = items.find(i => i.json._id);\n\n// AI intent result (contains quantity)\nconst intentItem = items.find(i => i.json.quantity !== undefined);\n\n// Safety defaults\nconst quantity = intentItem?.json?.quantity ?? 1;\n\nreturn [\n  {\n    json: {\n      product: productItem.json._id,\n      quantity: quantity\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        368
+      ],
+      "id": "d11c8c20-ef17-4210-8b09-2d4a29edf73f",
+      "name": "Make payload"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"output\": \"{{ JSON.parse($json.error.message.split(' - ')[1]).message }} with {{$json.quantity}} quantity\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -192,
+        432
+      ],
+      "id": "99f6b7c7-525d-4a64-ac31-26bbd5580836",
+      "name": "Product already exist in cart"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n{{ $json.message }} to your Cart.Please Visit your Cart.\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "18150aa7-d874-4fc6-9ab4-51a6a28f81af",
+      "name": "Product added to cart Successfully"
+    },
+    {
+      "parameters": {
+        "content": "       SEARCH _PRODUCT\n\nSearch product Related Info when Found or not Found",
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -544,
+        720
+      ],
+      "typeVersion": 1,
+      "id": "9f10117c-6217-45f8-af63-915e196fe886",
+      "name": "Sticky Note1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lanuagge Detection": {
+      "main": [
+        [
+          {
+            "node": "Shopping Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Lanuagge Detection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shopping Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Seacrh Products1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Seacrh Products",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [],
+        [],
+        [
+          {
+            "node": "General Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "General Query": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Lanuagge Detection",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Shopping Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "General Query",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seacrh Products": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Give FInd Prodcut ANSWER",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Give FInd Prodcut ANSWER": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Give FInd Prodcut ANSWER",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "when no Product Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "when no Product Found": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seacrh Products1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to Cart Request": {
+      "main": [
+        [
+          {
+            "node": "Product added to cart Successfully",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Product already exist in cart",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Make payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make payload": {
+      "main": [
+        [
+          {
+            "node": "Add to Cart Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Product already exist in cart": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Product added to cart Successfully": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "4a143234-60d3-4176-adaa-5fdd386f3dfa",
+  "meta": {
+    "instanceId": "00fef7bb49ad356afe93d626bf4d8042790dd391c438e26c3e164f8530d6e79f"
+  },
+  "id": "LT1dyw6yGh3xVGEnmuy6Y",
+  "tags": []
+}
