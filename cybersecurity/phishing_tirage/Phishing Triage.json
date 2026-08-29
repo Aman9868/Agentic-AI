@@ -1,0 +1,1833 @@
+{
+  "name": "Phishing Triage",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {}
+      },
+      "id": "87c30ff4-aef0-4090-81cb-99554ef74995",
+      "name": "📧 Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1488,
+        256
+      ],
+      "webhookId": "ai-soc-phishing-trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "qqILA3JUTtFPFgk1",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "get",
+        "messageId": "={{ $json.id }}",
+        "additionalFields": {
+          "downloadAttachments": true
+        },
+        "simplify": false
+      },
+      "id": "d3e1a9c2-1b7a-4f6e-9c0d-2f5a8b6c1e3a",
+      "name": "📨 Fetch Full Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        -1376,
+        256
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "qqILA3JUTtFPFgk1",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and enrich email data\n// Works whether the \"📨 Fetch Full Email\" node has Simplify ON (metadata format:\n// flattened From/Subject/To headers, no body) or OFF (full format: payload.parts\n// with base64url-encoded MIME bodies). Simplify must be OFF to get body text --\n// this node normalizes either shape so nothing downstream needs to change.\nconst raw = $input.item.json;\n\nfunction base64UrlDecode(data) {\n  if (!data) return '';\n  try {\n    const normalized = data.replace(/-/g, '+').replace(/_/g, '/');\n    return Buffer.from(normalized, 'base64').toString('utf-8');\n  } catch (e) {\n    return '';\n  }\n}\n\n// Recursively walk Gmail API MIME parts to collect plain/html body text and\n// attachment metadata (only present when Simplify is OFF, i.e. format=full).\nfunction walkParts(part, acc) {\n  if (!part) return;\n  const mimeType = part.mimeType || '';\n  if (mimeType === 'text/plain' && part.body && part.body.data) {\n    acc.textPlain += base64UrlDecode(part.body.data);\n  } else if (mimeType === 'text/html' && part.body && part.body.data) {\n    acc.textHtml += base64UrlDecode(part.body.data);\n  } else if (part.filename && part.filename.length > 0) {\n    acc.attachments.push({\n      filename: part.filename,\n      mimeType: part.mimeType || 'unknown',\n      size: (part.body && part.body.size) || 0\n    });\n  }\n  if (Array.isArray(part.parts)) {\n    for (const child of part.parts) walkParts(child, acc);\n  }\n}\n\nconst mime = { textPlain: '', textHtml: '', attachments: [] };\nif (raw.payload) {\n  walkParts(raw.payload, mime);\n}\n\n// Build a lowercase header map from payload.headers (only present when Simplify is OFF).\nconst headerMap = {};\nif (raw.payload && Array.isArray(raw.payload.headers)) {\n  for (const h of raw.payload.headers) {\n    if (h && h.name) headerMap[h.name.toLowerCase()] = h.value;\n  }\n}\n\n// Normalize so the rest of this node works no matter the Simplify setting:\n// Simplify ON gives capitalized top-level \"From\"/\"Subject\"/\"To\" and no body;\n// Simplify OFF gives payload.headers + payload.parts, decoded above.\nconst email = {\n  id: raw.id || '',\n  threadId: raw.threadId || '',\n  date: headerMap['date'] || (raw.internalDate ? new Date(Number(raw.internalDate)).toISOString() : ''),\n  fromRaw: raw.From || headerMap['from'] || '',\n  subject: raw.Subject || headerMap['subject'] || '',\n  textPlain: mime.textPlain,\n  textHtml: mime.textHtml,\n  headers: headerMap,\n  attachments: mime.attachments\n};\n\n// Extract all URLs from email body\nconst bodyText = email.textPlain || email.textHtml || '';\nconst urlRegex = /(https?:\\/\\/[^\\s<>\"']+)/gi;\nconst urls = [];\nlet match;\nwhile ((match = urlRegex.exec(bodyText)) !== null) {\n  urls.push(match[1]);\n}\n\n// Extract unique domains from URLs\nconst domains = [...new Set(urls.map(url => {\n  try {\n    return new URL(url).hostname;\n  } catch {\n    return url.replace(/^https?:\\/\\//, '').split('/')[0];\n  }\n}))];\n\n// Parse email headers for authentication\nconst headers = email.headers || {};\nconst authResults = headers['authentication-results'] || '';\n\n// Parse SPF, DKIM, DMARC\nconst spfMatch = authResults.match(/spf=(pass|fail|softfail|neutral|none)/i);\nconst dkimMatch = authResults.match(/dkim=(pass|fail|neutral|none)/i);\nconst dmarcMatch = authResults.match(/dmarc=(pass|fail|neutral|none)/i);\n\n// Check sender details -- \"From\" headers commonly look like: Name <user@domain.com>\nconst fromRaw = email.fromRaw || '';\nconst fromAngleMatch = fromRaw.match(/<([^>]+)>/);\nconst fromAddress = fromAngleMatch ? fromAngleMatch[1] : fromRaw;\nconst fromDomain = fromAddress.includes('@') ? fromAddress.split('@')[1].toLowerCase() : '';\nconst displayName = fromAngleMatch\n  ? fromRaw.split('<')[0].trim().replace(/^\"|\"$/g, '')\n  : (fromAddress.split('@')[0] || '');\n\n// Check for suspicious patterns\nconst suspiciousPatterns = {\n  has_urgency_words: /urgent|immediately|24 hour|account.*suspend|verify.*account|password.*expire/i.test(bodyText),\n  has_credential_request: /password|login|sign in|verify.*credential|confirm.*identity/i.test(bodyText),\n  has_threatening_language: /suspend|terminate|close.*account|legal action|arrest/i.test(bodyText),\n  has_attachment: !!(email.attachments && email.attachments.length > 0),\n  has_shortened_url: urls.some(u => /bit\\.ly|tinyurl|goo\\.gl|t\\.co|ow\\.ly|is\\.gd/i.test(u)),\n  has_ip_url: urls.some(u => /\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}/.test(u)),\n  has_misspelled_domain: domains.some(d => /microsoft|google|paypal|apple|amazon|facebook/i.test(d) && !/^(microsoft\\.com|google\\.com|paypal\\.com|apple\\.com|amazon\\.com|facebook\\.com)$/i.test(d))\n};\n\n// Get attachments info\nconst attachments = (email.attachments || []).map(a => ({\n  filename: a.filename || a.name || 'unknown',\n  size: a.size || 0,\n  mimeType: a.mimeType || a.contentType || 'unknown'\n}));\n\n// Build enriched payload\nreturn {\n  email_metadata: {\n    message_id: email.id || '',\n    thread_id: email.threadId || '',\n    timestamp: email.date || new Date().toISOString(),\n    from_address: fromAddress,\n    from_domain: fromDomain,\n    display_name: displayName,\n    subject: email.subject || '',\n    body_preview: bodyText.substring(0, 1200),\n    full_body_length: bodyText.length\n  },\n  authentication: {\n    spf_result: spfMatch ? spfMatch[1].toLowerCase() : 'unknown',\n    dkim_result: dkimMatch ? dkimMatch[1].toLowerCase() : 'unknown',\n    dmarc_result: dmarcMatch ? dmarcMatch[1].toLowerCase() : 'unknown',\n    auth_results_raw: authResults.substring(0, 500),\n    return_path: headers['return-path'] || '',\n    received_spf: headers['received-spf'] || ''\n  },\n  urls: {\n    all_urls: urls,\n    unique_domains: domains,\n    suspicious: suspiciousPatterns\n  },\n  attachments: attachments,\n  security_flags: suspiciousPatterns\n};"
+      },
+      "id": "7115ab04-1486-472d-b0e9-cd662a30d562",
+      "name": "🔍 Email Enricher",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -1264,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for AI Agent analysis\nconst enrichedData = $input.item.json;\n\n// Defensive caps: keep the request small no matter how much OSINT data\n// upstream nodes collected (Groq and most LLM APIs reject oversized\n// request bodies with a 413).\nfunction capSnippets(list, maxItems, maxLen) {\n  return (list || []).slice(0, maxItems).map(r => ({\n    title: (r.title || '').substring(0, 100),\n    link: r.link || '',\n    snippet: (r.snippet || '').substring(0, maxLen)\n  }));\n}\n\nconst osint = enrichedData.osint || {};\nconst cappedOsint = {\n  ...osint,\n  url: osint.url ? {\n    ...osint.url,\n    web_search: capSnippets(osint.url.web_search, 3, 150)\n  } : osint.url,\n  attachment: osint.attachment ? {\n    ...osint.attachment,\n    text_flags: osint.attachment.text_flags ? {\n      ...osint.attachment.text_flags,\n      text_preview: (osint.attachment.text_flags.text_preview || '').substring(0, 250)\n    } : osint.attachment.text_flags\n  } : osint.attachment,\n  sender: osint.sender ? {\n    ...osint.sender,\n    web_search: capSnippets(osint.sender.web_search, 3, 150)\n  } : osint.sender\n};\n\nconst cappedEmail = {\n  ...enrichedData.email_metadata,\n  body_preview: (enrichedData.email_metadata.body_preview || '').substring(0, 800)\n};\n\nconst analysisContext = {\n  task: \"analyze_email\",\n  email: cappedEmail,\n  auth: enrichedData.authentication,\n  flags: enrichedData.security_flags,\n  osint: cappedOsint\n};\n\nreturn {\n  analysis_context: JSON.stringify(analysisContext, null, 2),\n  email_data: enrichedData\n};\n"
+      },
+      "id": "9c3e28bd-e833-4261-a752-285b312d028b",
+      "name": "🎯 AI Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        3728,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "model": "llama-3.3-70b-versatile",
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "id": "abd055c9-e2cf-487d-a4a7-a254584a034f",
+      "name": "🧠 Groq Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        -464,
+        512
+      ],
+      "credentials": {
+        "groqApi": {
+          "id": "hy7uMEacVRtL0q0j",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"required\": [\"final_verdict\", \"confidence\", \"risk_score\", \"urgency_level\", \"threat_type\", \"spoofing_indicators\", \"suspicious_elements\", \"recommended_actions\", \"reasoning\", \"executive_summary\", \"mitre_techniques\"],\n  \"properties\": {\n    \"final_verdict\": { \"type\": \"string\", \"enum\": [\"phishing\", \"suspicious\", \"safe\", \"unknown\"] },\n    \"confidence\": { \"type\": \"number\", \"minimum\": 0, \"maximum\": 1 },\n    \"risk_score\": { \"type\": \"number\", \"minimum\": 0, \"maximum\": 1 },\n    \"urgency_level\": { \"type\": \"string\", \"enum\": [\"low\", \"medium\", \"high\", \"critical\"] },\n    \"threat_type\": { \"type\": \"string\" },\n    \"spoofing_indicators\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"suspicious_elements\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"recommended_actions\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"reasoning\": { \"type\": \"string\" },\n    \"executive_summary\": { \"type\": \"string\" },\n    \"mitre_techniques\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } }\n  }\n}"
+      },
+      "id": "57ebbd24-6ad5-4995-8d19-4bb59ffc3ec9",
+      "name": "📋 Structured Output",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1,
+      "position": [
+        -288,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.analysis_context }}",
+        "options": {
+          "systemMessage": "You are a senior SOC analyst triaging a single email. You will receive a JSON object with: email metadata, authentication (SPF/DKIM/DMARC), extracted urls/domains, attachments, and rule-based security_flags.\n\nUsing this evidence, decide whether the email is phishing, suspicious, safe, or unknown (use unknown only if evidence is genuinely insufficient — do not use it as a default).\n\nWeigh: failed/absent SPF-DKIM-DMARC combined with a mismatched Return-Path domain, newly-registered or typosquatted sender/link domains, urgency + credential-harvesting language, shortened or IP-literal URLs, and any attachment red flags.\n\nRespond with ONLY a single JSON object (no prose, no markdown fences) with exactly these fields:\n{{\n  \"final_verdict\": \"phishing\" | \"suspicious\" | \"safe\" | \"unknown\",\n  \"confidence\": number between 0 and 1,\n  \"risk_score\": number between 0 and 1,\n  \"urgency_level\": \"low\" | \"medium\" | \"high\" | \"critical\",\n  \"threat_type\": string,\n  \"spoofing_indicators\": string[],\n  \"suspicious_elements\": string[],\n  \"recommended_actions\": string[] (choose from: move_to_spam, block_sender, search_all_mailboxes, notify_user, force_password_reset_if_clicked, alert_soc, none),\n  \"reasoning\": string,\n  \"executive_summary\": string (1-2 sentences),\n  \"mitre_techniques\": string[] (MITRE ATT&CK technique IDs if applicable, else empty array)\n}}\nOnly recommend move_to_spam/block_sender/search_all_mailboxes when final_verdict is \"phishing\" and confidence >= 0.85.\n\nYou will also receive an `osint` object with real threat-intel lookups performed before you were called: osint.url.domain_age_days (RDAP registration age in days), osint.url.virustotal (engine detection counts for the link), osint.url.urlscan (scan submission status/link), osint.url.web_search (search snippets about the domain), osint.attachment.virustotal (file hash detection counts) and osint.attachment.text_flags (credential/urgency language found in the attachment text), and osint.sender.allowlisted / osint.sender.is_new_domain_to_us / osint.sender.prior_emails_count / osint.sender.web_search. Weigh this OSINT evidence heavily - e.g. a domain_age_days under 30 combined with any VirusTotal malicious detections is strong phishing evidence. A null or `checked: false` field means that lookup failed or found nothing and should not be treated as evidence either way, just as reduced confidence in that particular signal."
+        }
+      },
+      "id": "f4d72008-da98-4805-85dd-c2898cb9afa1",
+      "name": "🤖 AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        3728,
+        480
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process AI Agent output and prepare for routing\nconst aiResponse = $input.item.json;\n\nlet analysis;\ntry {\n  // Extract the actual analysis from AI agent response\n  if (aiResponse.output) {\n    if (typeof aiResponse.output === 'string') {\n      // Try to parse JSON from string\n      const jsonMatch = aiResponse.output.match(/\\{[\\s\\S]*\\}/);\n      analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : null;\n    } else {\n      analysis = aiResponse.output;\n    }\n  } else if (aiResponse.text) {\n    const jsonMatch = aiResponse.text.match(/\\{[\\s\\S]*\\}/);\n    analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : null;\n  } else {\n    analysis = aiResponse;\n  }\n} catch (e) {\n  analysis = null;\n}\n\n// Fallback if parsing fails\nif (!analysis || !analysis.final_verdict) {\n  analysis = {\n    final_verdict: 'unknown',\n    confidence: 0,\n    risk_score: 0.5,\n    urgency_level: 'medium',\n    threat_type: 'unknown',\n    spoofing_indicators: ['AI analysis failed'],\n    suspicious_elements: ['Unable to parse AI output'],\n    recommended_actions: ['alert_soc'],\n    reasoning: 'AI analysis failed, manual review required',\n    executive_summary: 'Analysis error - needs human review',\n    mitre_techniques: []\n  };\n}\n\n// Combine with email metadata\nconst emailData = $('🎯 AI Prep').item.json.email_data;\n\nreturn {\n  ...analysis,\n  timestamp: new Date().toISOString(),\n  email_from: emailData.email_metadata.from_address,\n  email_domain: emailData.email_metadata.from_domain,\n  email_subject: emailData.email_metadata.subject,\n  message_id: emailData.email_metadata.message_id,\n  thread_id: emailData.email_metadata.thread_id,\n  urls_found: emailData.urls.all_urls,\n  analysis_duration_seconds: (Date.now() - new Date(emailData.email_metadata.timestamp).getTime()) / 1000\n};"
+      },
+      "id": "1fcac98d-1b4f-4942-b180-66713283c173",
+      "name": "⚙️ Process AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        3704,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "phishing-check",
+                    "leftValue": "={{ $json.final_verdict }}",
+                    "rightValue": "phishing",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "equals"
+                    }
+                  },
+                  {
+                    "id": "high-confidence",
+                    "leftValue": "={{ $json.confidence }}",
+                    "rightValue": 0.7,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gte",
+                      "name": "greaterEqual"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "confirmed_phishing"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "suspicious-check",
+                    "leftValue": "={{ $json.final_verdict }}",
+                    "rightValue": "suspicious",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "suspicious"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "safe-check",
+                    "leftValue": "={{ $json.final_verdict }}",
+                    "rightValue": "safe",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "safe"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "unknown-check",
+                    "leftValue": "={{ $json.final_verdict }}",
+                    "rightValue": "unknown",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "unknown"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 3
+        }
+      },
+      "id": "79f1f586-9461-4ef0-93b9-700380835109",
+      "name": "🔀 Route by Verdict",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        3864,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=🚨 <b>CONFIRMED PHISHING - AUTO-RESPONSE INITIATED</b>\\n\\n<b>From:</b> {{ $json.email_from }}\\n<b>Subject:</b> {{ $json.email_subject }}\\n\\n<b>Risk Score:</b> {{ ($json.risk_score * 100).toFixed(0) }}%\\n<b>Confidence:</b> {{ ($json.confidence * 100).toFixed(0) }}%\\n<b>Urgency:</b> {{ $json.urgency_level }}\\n<b>Threat Type:</b> {{ $json.threat_type }}\\n\\n<b>Executive Summary:</b>\\n{{ $json.executive_summary }}\\n\\n<b>Spoofing Indicators:</b>\\n{{ $json.spoofing_indicators.join('\\n• ') }}\\n\\n<b>Suspicious Elements:</b>\\n{{ $json.suspicious_elements.join('\\n• ') }}\\n\\n<b>MITRE ATT&CK:</b> {{ $json.mitre_techniques.join(', ') }}\\n\\n<b>Recommended Actions:</b>\\n{{ $json.recommended_actions.join('\\n• ') }}\\n\\n<b>Reasoning:</b>\\n{{ $json.reasoning }}\\n\\n<b>Time:</b> {{ $json.timestamp }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "1b3a6164-9853-4ccf-a4f0-a6f124f5a4ac",
+      "name": "🚨 Telegram Critical Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        4056,
+        -128
+      ],
+      "webhookId": "2243bae6-e0a9-407a-b9d6-6f8a9c3f927e",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "modify",
+        "messageId": "={{ $json.message_id }}",
+        "labelIds": [
+          "SPAM"
+        ]
+      },
+      "id": "a9752426-883a-4365-bf11-2c45fe36fe4e",
+      "name": "🚫 Quarantine Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        4744,
+        144
+      ],
+      "webhookId": "f64c1061-0763-4137-aeff-2c6162143814",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "qqILA3JUTtFPFgk1",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "q": "=from:{{ $json.email_domain }}"
+      },
+      "id": "83a48387-eaca-4a01-a0bb-6e6c2abb529b",
+      "name": "🔎 Search All Mailboxes",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        4744,
+        528
+      ],
+      "webhookId": "f732f00f-c1df-41f1-80b7-b37906e73ecb",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "qqILA3JUTtFPFgk1",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": "PhishingIncidents",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ $json.timestamp }}",
+            "verdict": "={{ $json.final_verdict }}",
+            "confidence": "={{ $json.confidence }}",
+            "risk_score": "={{ $json.risk_score }}",
+            "urgency": "={{ $json.urgency_level }}",
+            "threat_type": "={{ $json.threat_type }}",
+            "from": "={{ $json.email_from }}",
+            "domain": "={{ $json.email_domain }}",
+            "subject": "={{ $json.email_subject }}",
+            "indicators": "={{ $json.spoofing_indicators.join('; ') }}",
+            "suspicious": "={{ $json.suspicious_elements.join('; ') }}",
+            "actions": "={{ $json.recommended_actions.join('; ') }}",
+            "mitre": "={{ $json.mitre_techniques.join('; ') }}",
+            "reasoning": "={{ $json.reasoning }}",
+            "urls": "={{ $json.urls_found.join('; ') }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "6bf0149f-2f3b-476d-b0be-7f31fc4c7915",
+      "name": "📊 Log to Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        4088,
+        672
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "X4UQL4D2hEWwEQ4k",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=⚠️ <b>SUSPICIOUS EMAIL - MANUAL REVIEW RECOMMENDED</b>\\n\\n<b>From:</b> {{ $json.email_from }}\\n<b>Subject:</b> {{ $json.email_subject }}\\n\\n<b>Risk Score:</b> {{ ($json.risk_score * 100).toFixed(0) }}%\\n<b>Confidence:</b> {{ ($json.confidence * 100).toFixed(0) }}%\\n\\n<b>Summary:</b> {{ $json.executive_summary }}\\n\\n<b>Reasoning:</b> {{ $json.reasoning }}\\n\\n<b>Time:</b> {{ $json.timestamp }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "1a298dc9-4ff7-4369-b06a-16b8c6d533f1",
+      "name": "⚠️ Telegram Suspicious",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        4088,
+        848
+      ],
+      "webhookId": "c73a8f73-dfdc-4a61-9dac-5f61f91ad32d",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": "SuspiciousEmails",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ $json.timestamp }}",
+            "from": "={{ $json.email_from }}",
+            "subject": "={{ $json.email_subject }}",
+            "verdict": "={{ $json.final_verdict }}",
+            "confidence": "={{ $json.confidence }}",
+            "risk_score": "={{ $json.risk_score }}",
+            "reasoning": "={{ $json.reasoning }}",
+            "indicators": "={{ $json.spoofing_indicators.join('; ') }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "f672c0cd-2c62-4719-baf1-56db11a28736",
+      "name": "📊 Log Suspicious",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        4072,
+        1040
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "X4UQL4D2hEWwEQ4k",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "sendTo": "={{ $('📨 Fetch Full Email').item.json.to }}",
+        "subject": "Security Alert: Phishing Email Detected",
+        "message": "=We detected and removed a phishing email from your inbox.<br><br><b>Sender:</b> {{ $json.email_from }}<br><b>Subject:</b> {{ $json.email_subject }}<br><br>What we did:<br>- Moved the email to spam<br>- Blocked the sender<br>- Checked your mailbox for other instances<br><br>No action is needed from you. If you clicked the link or opened the attachment before it was removed, contact IT immediately.",
+        "options": {}
+      },
+      "id": "e1064f60-fce2-409b-acfc-dd64fec0cbc4",
+      "name": "📧 Notify User",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        4744,
+        -96
+      ],
+      "webhookId": "b1dc4a06-f544-473a-96e9-71ae5676560f",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "qqILA3JUTtFPFgk1",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": "AllEmails",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ $json.timestamp }}",
+            "from": "={{ $json.email_from }}",
+            "domain": "={{ $json.email_domain }}",
+            "subject": "={{ $json.email_subject }}",
+            "verdict": "={{ $json.final_verdict }}",
+            "confidence": "={{ $json.confidence }}",
+            "risk_score": "={{ $json.risk_score }}",
+            "threat_type": "={{ $json.threat_type }}",
+            "urls": "={{ $json.urls_found.join('; ') }}",
+            "actions_taken": "={{ $json.recommended_actions.join('; ') }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "548f9f97-4f03-4d59-8619-ec0776fb0cf7",
+      "name": "📊 Log All",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        4744,
+        336
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "X4UQL4D2hEWwEQ4k",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Create ticket data for ITSM\nconst data = $input.item.json;\n\nreturn {\n  ticket: {\n    title: `Phishing Email: ${data.email_subject}`,\n    description: `Automated phishing detection\\n\\nFrom: ${data.email_from}\\nSubject: ${data.email_subject}\\nRisk Score: ${data.risk_score}\\nConfidence: ${data.confidence}\\n\\nIndicators:\\n${data.spoofing_indicators.join('\\n')}\\n\\nActions Taken:\\n${data.recommended_actions.join('\\n')}\\n\\nReasoning:\\n${data.reasoning}`,\n    priority: data.urgency_level === 'critical' ? 'P1' : data.urgency_level === 'high' ? 'P2' : 'P3',\n    category: 'security_incident',\n    type: 'phishing',\n    source: 'ai_agent'\n  }\n};"
+      },
+      "id": "1e1f3e29-726d-493e-b5a2-6b81e0e7b8f0",
+      "name": "🎫 Create Ticket",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        4728,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_ITSM_INSTANCE.example.com/api/tickets",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.ticket) }}",
+        "options": {}
+      },
+      "id": "2a6b5e6b-0e2b-4a2f-9f2d-3a9e6b0f7c1d",
+      "name": "🎫 Send Ticket to ITSM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4952,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=✅ <b>EMAIL CLEANED</b>\\n\\nFrom: {{ $json.email_from }}\\nSubject: {{ $json.email_subject }}\\nVerdict: {{ $json.final_verdict }}\\nConfidence: {{ ($json.confidence * 100).toFixed(0) }}%\\n\\nNo action required.",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "815e3aea-545e-4835-9167-d87b957c9d73",
+      "name": "✅ Telegram Safe",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        4728,
+        864
+      ],
+      "webhookId": "8900d365-47ea-47e2-9c42-73d829939526",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=❓ <b>UNKNOWN EMAIL - NEEDS REVIEW</b>\\n\\nFrom: {{ $json.email_from }}\\nSubject: {{ $json.email_subject }}\\n\\nThe AI could not confidently classify this email.\\n\\nReasoning: {{ $json.reasoning }}\\n\\nPlease review manually.",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "aeb2b9e2-8053-4768-89de-14e24866d7c0",
+      "name": "❓ Telegram Unknown",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        4712,
+        1056
+      ],
+      "webhookId": "8ce8c412-a733-409d-adc6-d4a027485f38",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_YOUR_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Flatten the primary URL/domain and attachment info so downstream\n// OSINT nodes have simple fields to work with.\nconst data = $input.item.json;\nconst urls = (data.urls && data.urls.all_urls) || [];\nconst domains = (data.urls && data.urls.unique_domains) || [];\nlet primary_url = urls[0] || '';\nlet primary_domain = domains[0] || '';\nif (!primary_domain && primary_url) {\n  try { primary_domain = new URL(primary_url).hostname; } catch (e) {}\n}\n\nconst rawEmail = $('📨 Fetch Full Email').item.json;\nconst attachments = rawEmail.attachments || [];\nconst firstAttachment = attachments[0] || null;\n\nreturn {\n  ...data,\n  primary_url,\n  primary_domain,\n  from_domain: data.email_metadata.from_domain,\n  message_id: data.email_metadata.message_id,\n  has_attachment: !!firstAttachment,\n  attachment_filename: firstAttachment ? (firstAttachment.filename || firstAttachment.name || 'unknown') : null,\n  attachment_id: firstAttachment ? (firstAttachment.id || firstAttachment.attachmentId || '') : null\n};\n"
+      },
+      "id": "d990e8be-4295-46ec-939f-3c051fb2ace6",
+      "name": "🧩 Prepare OSINT Targets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -1264,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://rdap.org/domain/{{ $json.primary_domain }}",
+        "options": {}
+      },
+      "id": "a5f4fad7-2201-428d-9082-3098931264db",
+      "name": "🌐 RDAP WHOIS Lookup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1056,
+        560
+      ],
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const prep = $('🧩 Prepare OSINT Targets').item.json;\nconst rdap = $input.item.json;\nlet domain_age_days = null, created_date = null, registrar = null;\ntry {\n  const events = rdap.events || [];\n  const reg = events.find(e => e.eventAction === 'registration');\n  if (reg) {\n    created_date = reg.eventDate;\n    domain_age_days = Math.floor((Date.now() - new Date(reg.eventDate).getTime()) / 86400000);\n  }\n  const registrarEntity = (rdap.entities || []).find(e => (e.roles || []).includes('registrar'));\n  registrar = registrarEntity ? (registrarEntity.handle || 'unknown') : null;\n} catch (e) {}\n\nreturn {\n  ...prep,\n  domain_intel: {\n    domain_age_days,\n    created_date,\n    registrar,\n    rdap_lookup_succeeded: !!(rdap && rdap.events)\n  }\n};\n"
+      },
+      "id": "6b789ff4-7d78-44c5-b43b-d702fc718449",
+      "name": "📆 Parse Domain Age",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -848,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// VirusTotal v3 looks URLs up by an unpadded base64url id\nconst data = $input.item.json;\nfunction b64url(str) {\n  return Buffer.from(str).toString('base64').replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');\n}\nreturn { ...data, vt_url_id: data.primary_url ? b64url(data.primary_url) : '' };\n"
+      },
+      "id": "aa7024a0-6b90-4dba-a1bd-34b1baee14c5",
+      "name": "🔑 Compute VT URL ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.virustotal.com/api/v3/urls/{{ $json.vt_url_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "9a60ba27-9237-4ef6-9a65-94523eb7979f",
+      "name": "🦠 VirusTotal URL Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -432,
+        560
+      ],
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_VIRUSTOTAL_CREDENTIAL_ID",
+          "name": "VirusTotal API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('🔑 Compute VT URL ID').item.json;\nconst vt = $input.item.json;\nlet vt_url_analysis = { checked: false, malicious_count: 0, total_engines: 0, categories: [] };\ntry {\n  if (vt.data && vt.data.attributes) {\n    const stats = vt.data.attributes.last_analysis_stats || {};\n    vt_url_analysis = {\n      checked: true,\n      malicious_count: stats.malicious || 0,\n      suspicious_count: stats.suspicious || 0,\n      total_engines: Object.values(stats).reduce((a, b) => a + b, 0),\n      categories: Object.values(vt.data.attributes.categories || {}),\n      reputation: vt.data.attributes.reputation\n    };\n  }\n} catch (e) {}\nreturn { ...prior, vt_url_analysis };\n"
+      },
+      "id": "af706ea9-556d-45b7-9e9f-142a32cf4989",
+      "name": "🦠 Parse VT URL Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://urlscan.io/api/v1/scan/",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ url: $json.primary_url, visibility: \"unlisted\" }) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "4635e714-b302-4373-af83-20e4ad80d321",
+      "name": "📷 URLScan.io Submit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -16,
+        560
+      ],
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_URLSCAN_CREDENTIAL_ID",
+          "name": "URLScan.io API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// URLScan needs ~10-20s to finish rendering, so we don't block the\n// triage on the screenshot - we record the submission and link for\n// a human/second pass to review, and let the LLM know a scan is pending.\nconst prior = $('🦠 Parse VT URL Result').item.json;\nconst scan = $input.item.json;\nreturn {\n  ...prior,\n  urlscan_submission: {\n    submitted: !!(scan && scan.uuid),\n    scan_uuid: scan.uuid || null,\n    result_url: scan.result || null\n  }\n};\n"
+      },
+      "id": "f34c4963-1f00-4fff-8ff1-fc8252f95866",
+      "name": "📷 Parse URLScan Submission",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        192,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://google.serper.dev/search",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ q: $json.primary_domain + ' phishing OR scam' }) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "94e21164-525d-4fce-bbf4-1adb6aea2f73",
+      "name": "🔎 Serper Domain Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        560
+      ],
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_SERPER_CREDENTIAL_ID",
+          "name": "Serper.dev API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('📷 Parse URLScan Submission').item.json;\nconst serp = $input.item.json;\nconst organic = (serp.organic || []).slice(0, 5).map(r => ({ title: r.title, link: r.link, snippet: r.snippet }));\nreturn { ...prior, domain_web_search: organic };\n"
+      },
+      "id": "da88d451-e751-4804-9d2c-0deadeae721c",
+      "name": "🔎 Parse Domain Search",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        608,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": "Allowlist",
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "domain",
+              "lookupValue": "={{ $json.from_domain }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "90993954-6d2e-431d-96f0-b8a961d51835",
+      "name": "📋 Check Sender Allowlist",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        816,
+        560
+      ],
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "X4UQL4D2hEWwEQ4k",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('🔀 Has Sender Domain?').item.json;\nconst rows = $input.all().map(i => i.json);\nreturn { ...prior, sender_allowlisted: rows.length > 0 };\n"
+      },
+      "id": "5397d6ae-610d-437d-8055-b69b55843785",
+      "name": "📋 Parse Allowlist Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1024,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "q": "=from:{{ $json.from_domain }}"
+      },
+      "id": "8da77eb1-ffbb-49ff-91cf-6f5d8de91ed2",
+      "name": "📜 Check Sender History",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        1232,
+        560
+      ],
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "qqILA3JUTtFPFgk1",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('📋 Parse Allowlist Result').item.json;\nconst results = $input.all().map(i => i.json);\nreturn {\n  ...prior,\n  sender_prior_emails_count: results.length,\n  sender_is_new: results.length === 0\n};\n"
+      },
+      "id": "6c9ff2cc-750a-4205-9aad-7f48ec4b671f",
+      "name": "📜 Parse Sender History",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://google.serper.dev/search",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ q: $json.from_domain + ' email security reputation' }) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "3ec29ab2-f844-4ea9-bf94-313ed6a250cb",
+      "name": "🔎 Serper Sender Reputation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1648,
+        560
+      ],
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_SERPER_CREDENTIAL_ID",
+          "name": "Serper.dev API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('📜 Parse Sender History').item.json;\nconst serp = $input.item.json;\nconst organic = (serp.organic || []).slice(0, 5).map(r => ({ title: r.title, link: r.link, snippet: r.snippet }));\nreturn { ...prior, sender_web_search: organic };\n"
+      },
+      "id": "4fba7b71-1e22-42b7-8ba9-d735f6a0fe85",
+      "name": "🔎 Parse Sender Reputation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1856,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "has-attachment",
+              "leftValue": "={{ $json.has_attachment }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b5ec962a-71ed-4ff6-9f95-56b817485aee",
+      "name": "🔀 Has Attachment?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2064,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "get",
+        "messageId": "={{ $json.message_id }}",
+        "additionalFields": {
+          "downloadAttachments": true
+        }
+      },
+      "id": "c47f8622-5285-4b50-992b-b221af0a69f7",
+      "name": "📎 Download Attachment",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        2272,
+        432
+      ],
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "qqILA3JUTtFPFgk1",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.item;\nconst binaryKeys = Object.keys(item.binary || {});\nlet sha256 = null, binaryKey = null;\nif (binaryKeys.length > 0) {\n  binaryKey = binaryKeys[0];\n  const buffer = await this.helpers.getBinaryDataBuffer(0, binaryKey);\n  sha256 = crypto.createHash('sha256').update(buffer).digest('hex');\n}\nreturn {\n  json: { ...item.json, attachment_sha256: sha256, attachment_binary_key: binaryKey },\n  binary: item.binary\n};\n"
+      },
+      "id": "b6758e96-377c-41ad-a9e1-ebea34a46598",
+      "name": "🔐 Hash Attachment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        2480,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "={{ $json.attachment_binary_key }}",
+        "options": {}
+      },
+      "id": "5bfc5f0b-030b-443a-8312-5d9b7160402c",
+      "name": "📄 Extract Attachment Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        2688,
+        432
+      ],
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const priorHash = $('🔐 Hash Attachment').item.json;\nconst extracted = $input.item.json;\nconst text = (extracted.text || '').toString();\nreturn {\n  ...priorHash,\n  attachment_text_flags: {\n    requests_credentials: /password|login|credential|verify.*account/i.test(text),\n    has_urgency: /urgent|immediately|expire|24 hour/i.test(text),\n    text_preview: text.substring(0, 250)\n  }\n};\n"
+      },
+      "id": "6a18311a-71ab-4a52-ba2e-9589516b4522",
+      "name": "📄 Parse PDF Text Flags",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        2896,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.virustotal.com/api/v3/files/{{ $json.attachment_sha256 }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "22cd5515-9717-4353-93a8-910659508707",
+      "name": "🦠 VirusTotal File Hash Lookup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3104,
+        432
+      ],
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_VIRUSTOTAL_CREDENTIAL_ID",
+          "name": "VirusTotal API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('📄 Parse PDF Text Flags').item.json;\nconst vt = $input.item.json;\nlet file_analysis = { checked: false, malicious_count: 0, total_engines: 0, threat_names: [] };\ntry {\n  if (vt.data && vt.data.attributes) {\n    const stats = vt.data.attributes.last_analysis_stats || {};\n    const results = vt.data.attributes.last_analysis_results || {};\n    const names = Object.values(results).filter(r => r.category === 'malicious').map(r => r.result).filter(Boolean);\n    file_analysis = {\n      checked: true,\n      malicious_count: stats.malicious || 0,\n      total_engines: Object.values(stats).reduce((a, b) => a + b, 0),\n      threat_names: [...new Set(names)].slice(0, 5)\n    };\n  }\n} catch (e) {}\nreturn { ...prior, file_analysis };\n"
+      },
+      "id": "b99e05a3-6d12-4f25-9790-4f259e32e01b",
+      "name": "🦠 Parse VT File Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        3312,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $input.item.json;\nreturn {\n  ...prior,\n  file_analysis: { checked: false, malicious_count: 0, total_engines: 0, threat_names: [] },\n  attachment_text_flags: null\n};\n"
+      },
+      "id": "85e3c7b5-adf9-4d3e-8e70-400cb204fc2d",
+      "name": "📎 No Attachment Default",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        2272,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.item.json;\nreturn {\n  email_metadata: d.email_metadata,\n  authentication: d.authentication,\n  security_flags: d.security_flags,\n  urls: d.urls,\n  attachments: d.attachments,\n  osint: {\n    url: {\n      target_url: d.primary_url,\n      target_domain: d.primary_domain,\n      domain_age_days: d.domain_intel ? d.domain_intel.domain_age_days : null,\n      registrar: d.domain_intel ? d.domain_intel.registrar : null,\n      virustotal: d.vt_url_analysis || null,\n      urlscan: d.urlscan_submission || null,\n      web_search: d.domain_web_search || []\n    },\n    attachment: {\n      filename: d.attachment_filename,\n      sha256: d.attachment_sha256 || null,\n      virustotal: d.file_analysis || null,\n      text_flags: d.attachment_text_flags || null\n    },\n    sender: {\n      domain: d.from_domain,\n      allowlisted: d.sender_allowlisted || false,\n      prior_emails_count: d.sender_prior_emails_count,\n      is_new_domain_to_us: d.sender_is_new,\n      web_search: d.sender_web_search || []\n    }\n  }\n};\n"
+      },
+      "id": "93eb4080-8720-4146-ac9e-1f4d87be96cb",
+      "name": "🧬 Merge OSINT Findings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        3520,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "5d0e2b3c-9a0e-40bc-9214-50b0fbea5c9b",
+              "leftValue": "={{ $json.primary_domain }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a6859b2b-4a6b-4f24-ba93-827f82120df6",
+      "name": "🔀 Has Domain?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1056,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// No URL/domain was found in the email body - skip the OSINT calls\n// that need one rather than firing malformed requests.\nconst prior = $input.item.json;\nreturn {\n  ...prior,\n  domain_intel: {\n    domain_age_days: null, created_date: null, registrar: null,\n    rdap_lookup_succeeded: false, skipped_reason: 'no primary domain extracted from email'\n  },\n  vt_url_analysis: { checked: false, malicious_count: 0, total_engines: 0, categories: [], skipped: true },\n  urlscan_submission: { submitted: false, scan_uuid: null, result_url: null, skipped: true },\n  domain_web_search: []\n};\n"
+      },
+      "id": "c291b52b-866a-440d-8c6f-89dcd0862cda",
+      "name": "🌐 No URL Default",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -1056,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "59c62c88-d39a-4e9a-b7d4-5e46d49e099e",
+              "leftValue": "={{ $json.from_domain }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c6fc6dc9-0df1-444b-89c0-f2e7f947a8ca",
+      "name": "🔀 Has Sender Domain?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        608,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// No sender domain could be parsed from the From address - skip the\n// allowlist/history/reputation lookups rather than querying with a blank value.\nconst prior = $input.item.json;\nreturn {\n  ...prior,\n  sender_allowlisted: false,\n  sender_prior_emails_count: 0,\n  sender_is_new: true,\n  sender_web_search: []\n};\n"
+      },
+      "id": "a66ecc45-1812-464b-9d08-5aa759d60689",
+      "name": "📋 No Sender Domain Default",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        816,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "0baceb93-b84f-4c7c-b27b-90ac160a25a8",
+              "leftValue": "={{ $json.attachment_sha256 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e0ab45cc-d05b-4a51-bcda-8df08a000425",
+      "name": "🔀 Has Hash?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Attachment had no readable binary / hash couldn't be computed -\n// skip the file OSINT lookups rather than querying VirusTotal with a null hash.\nconst prior = $input.item.json;\nreturn {\n  ...prior,\n  file_analysis: { checked: false, malicious_count: 0, total_engines: 0, threat_names: [], skipped: true },\n  attachment_text_flags: null\n};\n"
+      },
+      "id": "488be23b-5c9d-444b-9601-c9a16434da31",
+      "name": "🔐 No Hash Default",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        2480,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "id": "017170ec-7d7a-4ec1-a637-383958450286",
+      "name": "✨ Gemini Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -464,
+        720
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "REPLACE_WITH_YOUR_GEMINI_CREDENTIAL_ID",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "meta/llama-3.1-405b-instruct",
+        "options": {
+          "temperature": 0.1,
+          "baseURL": "https://integrate.api.nvidia.com/v1"
+        }
+      },
+      "id": "bd9cd7ea-572b-4c9c-8c69-b18a560aae0d",
+      "name": "🟩 NVIDIA NIM Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        -464,
+        928
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_YOUR_NVIDIA_NIM_CREDENTIAL_ID",
+          "name": "NVIDIA NIM API Key"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "📧 Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "📨 Fetch Full Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📨 Fetch Full Email": {
+      "main": [
+        [
+          {
+            "node": "🔍 Email Enricher",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Email Enricher": {
+      "main": [
+        [
+          {
+            "node": "🧩 Prepare OSINT Targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎯 AI Prep": {
+      "main": [
+        [
+          {
+            "node": "🤖 AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 AI Agent": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Process AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Process AI Output": {
+      "main": [
+        [
+          {
+            "node": "🔀 Route by Verdict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Route by Verdict": {
+      "main": [
+        [
+          {
+            "node": "🚨 Telegram Critical Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🚫 Quarantine Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🔎 Search All Mailboxes",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "📊 Log to Sheets",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "📧 Notify User",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "🎫 Create Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "⚠️ Telegram Suspicious",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "📊 Log Suspicious",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "✅ Telegram Safe",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "📊 Log All",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "❓ Telegram Unknown",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "📊 Log All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎫 Create Ticket": {
+      "main": [
+        [
+          {
+            "node": "🎫 Send Ticket to ITSM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Structured Output": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "🤖 AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 Groq Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🤖 AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧩 Prepare OSINT Targets": {
+      "main": [
+        [
+          {
+            "node": "🔀 Has Domain?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🌐 RDAP WHOIS Lookup": {
+      "main": [
+        [
+          {
+            "node": "📆 Parse Domain Age",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📆 Parse Domain Age": {
+      "main": [
+        [
+          {
+            "node": "🔑 Compute VT URL ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔑 Compute VT URL ID": {
+      "main": [
+        [
+          {
+            "node": "🦠 VirusTotal URL Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🦠 VirusTotal URL Report": {
+      "main": [
+        [
+          {
+            "node": "🦠 Parse VT URL Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🦠 Parse VT URL Result": {
+      "main": [
+        [
+          {
+            "node": "📷 URLScan.io Submit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📷 URLScan.io Submit": {
+      "main": [
+        [
+          {
+            "node": "📷 Parse URLScan Submission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📷 Parse URLScan Submission": {
+      "main": [
+        [
+          {
+            "node": "🔎 Serper Domain Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔎 Serper Domain Search": {
+      "main": [
+        [
+          {
+            "node": "🔎 Parse Domain Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔎 Parse Domain Search": {
+      "main": [
+        [
+          {
+            "node": "🔀 Has Sender Domain?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Check Sender Allowlist": {
+      "main": [
+        [
+          {
+            "node": "📋 Parse Allowlist Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Parse Allowlist Result": {
+      "main": [
+        [
+          {
+            "node": "📜 Check Sender History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📜 Check Sender History": {
+      "main": [
+        [
+          {
+            "node": "📜 Parse Sender History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📜 Parse Sender History": {
+      "main": [
+        [
+          {
+            "node": "🔎 Serper Sender Reputation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔎 Serper Sender Reputation": {
+      "main": [
+        [
+          {
+            "node": "🔎 Parse Sender Reputation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔎 Parse Sender Reputation": {
+      "main": [
+        [
+          {
+            "node": "🔀 Has Attachment?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Has Attachment?": {
+      "main": [
+        [
+          {
+            "node": "📎 Download Attachment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📎 No Attachment Default",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📎 Download Attachment": {
+      "main": [
+        [
+          {
+            "node": "🔐 Hash Attachment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔐 Hash Attachment": {
+      "main": [
+        [
+          {
+            "node": "🔀 Has Hash?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📄 Extract Attachment Text": {
+      "main": [
+        [
+          {
+            "node": "📄 Parse PDF Text Flags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📄 Parse PDF Text Flags": {
+      "main": [
+        [
+          {
+            "node": "🦠 VirusTotal File Hash Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🦠 VirusTotal File Hash Lookup": {
+      "main": [
+        [
+          {
+            "node": "🦠 Parse VT File Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🦠 Parse VT File Result": {
+      "main": [
+        [
+          {
+            "node": "🧬 Merge OSINT Findings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📎 No Attachment Default": {
+      "main": [
+        [
+          {
+            "node": "🧬 Merge OSINT Findings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧬 Merge OSINT Findings": {
+      "main": [
+        [
+          {
+            "node": "🎯 AI Prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Has Domain?": {
+      "main": [
+        [
+          {
+            "node": "🌐 RDAP WHOIS Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🌐 No URL Default",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🌐 No URL Default": {
+      "main": [
+        [
+          {
+            "node": "🔀 Has Sender Domain?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Has Sender Domain?": {
+      "main": [
+        [
+          {
+            "node": "📋 Check Sender Allowlist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📋 No Sender Domain Default",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 No Sender Domain Default": {
+      "main": [
+        [
+          {
+            "node": "🔀 Has Attachment?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Has Hash?": {
+      "main": [
+        [
+          {
+            "node": "📄 Extract Attachment Text",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔐 No Hash Default",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔐 No Hash Default": {
+      "main": [
+        [
+          {
+            "node": "🧬 Merge OSINT Findings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✨ Gemini Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🤖 AI Agent",
+            "type": "ai_languageModel",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "🟩 NVIDIA NIM Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🤖 AI Agent",
+            "type": "ai_languageModel",
+            "index": 2
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "2f53be26-623a-47b3-9cce-5db7de3441bf",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4dd29566f4ae8f204a39dae2da429ed43c62e15dfbe0a8806e0381e10c19fc24"
+  },
+  "nodeGroups": [],
+  "id": "Pk8tVGP9swVf8tDG",
+  "tags": []
+}

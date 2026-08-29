@@ -1,0 +1,1033 @@
+{
+  "name": "Daily Job Search + AI Match + Auto-Apply + WhatsApp Notify",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "a78bee7f-789f-4db4-965c-524aa86ca80a",
+      "name": "Daily Trigger (9AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -8640,
+        4240
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a2",
+              "name": "targetRoles",
+              "type": "string",
+              "value": "AI Engineer, ML Engineer"
+            },
+            {
+              "id": "a3",
+              "name": "targetLocations",
+              "type": "string",
+              "value": "Noida, Gurugram, Chandigarh, Delhi"
+            },
+            {
+              "id": "a4",
+              "name": "matchThreshold",
+              "type": "number",
+              "value": 70
+            },
+            {
+              "id": "a6",
+              "name": "twilioWhatsappFrom",
+              "type": "string",
+              "value": "whatsapp:+14155238886"
+            },
+            {
+              "id": "a8",
+              "name": "currentCTC",
+              "type": "string",
+              "value": "11 LPA"
+            },
+            {
+              "id": "a9",
+              "name": "expectedCTC",
+              "type": "string",
+              "value": "15 LPA"
+            },
+            {
+              "id": "a10",
+              "name": "noticePeriod",
+              "type": "string",
+              "value": "45 days"
+            },
+            {
+              "id": "392c926a-9a16-4b3f-a223-80037613e8fa",
+              "name": "drive_url",
+              "type": "string",
+              "value": "https://drive.google.com/file/d/1Bv68ybbz5K1Vhn2GX51gqcSNY_-PHZvf/view?usp=drive_link"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9831f5b8-740a-4855-941e-b71947292db4",
+      "name": "Candidate Config (edit me)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -8448,
+        4240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "={{ $json.drive_url }}",
+          "__regex": "https:\\/\\/(?:drive|docs)\\.google\\.com(?:\\/.*|)\\/d\\/([0-9a-zA-Z\\-_]+)(?:\\/.*|)"
+        },
+        "options": {}
+      },
+      "id": "393ae4a6-1b7d-4c11-b677-faaf9baf7fb9",
+      "name": "Download CV PDF (Google Drive)",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -8256,
+        4240
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "HkxN6jPco4377NnI",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "id": "507c36b0-bbfa-4295-848b-2b18b12328d6",
+      "name": "Extract Text from CV PDF",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -8416,
+        3824
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pulls candidate settings straight from 'Candidate Config (edit me)', the raw CV text from\n// 'Extract Text from CV PDF', and the parsed profile (including extracted email/phone) straight\n// from 'AI Agent' - no separate merge/parse nodes needed.\nconst cfg = $('Candidate Config (edit me)').first().json;\nconst cvText = $('Extract Text from CV PDF').first().json.text;\n\nlet profile = {\n  candidate_name: '', total_experience_years: 0, current_title: '',\n  top_skills: [], key_technologies: [], certifications: [], education: '', summary: '',\n  email: '', phone: ''\n};\ntry {\n  // AI Agent + Structured Output Parser returns the parsed object under json.output\n  const out = $('AI Agent').first().json.output;\n  const parsed = typeof out === 'string' ? JSON.parse(out.replace(/```json|```/g, '').trim()) : out;\n  profile = { ...profile, ...parsed };\n} catch (e) {\n  // parsing failed - fall back to empty profile, cvText below still carries everything downstream needs\n}\n\nconst config = {\n  ...cfg,\n  cvText,\n  cvProfile: JSON.stringify(profile),\n  // Candidate's own contact details are now derived from the CV by the AI Agent instead of being\n  // typed into Candidate Config.\n  candidatePhone: profile.phone || '',\n  candidateEmail: profile.email.toLowerCase()|| ''\n};\n\nconst roles = config.targetRoles.split(',').map(r => r.trim()).filter(Boolean);\nconst locations = config.targetLocations.split(',').map(l => l.trim()).filter(Boolean);\nconst combos = [];\nfor (const role of roles) {\n  for (const loc of locations) {\n    combos.push({ role, loc, query: `${role} jobs in ${loc}, India` });\n  }\n}\nreturn combos.map(c => ({\n  json: { ...config, query: c.query, searchLocation: c.loc, searchRole: c.role }\n}));"
+      },
+      "id": "6f719502-ee83-4ec0-96a0-6a98869499d0",
+      "name": "Build Search Queries (per city)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -7680,
+        4240
+      ],
+      "notes": "UPDATED: now reads Candidate Config + raw CV text + AI Agent's structured output directly (via $('NodeName') references) instead of relying on the removed 'Parse CV Profile JSON' and 'Merge CV Text into Config' nodes. candidatePhone/candidateEmail are now derived from the CV by the AI Agent rather than typed manually."
+    },
+    {
+      "parameters": {
+        "url": "https://jsearch.p.rapidapi.com/search-v2",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.query }}"
+            },
+            {
+              "name": "page",
+              "value": "1"
+            },
+            {
+              "name": "num_pages",
+              "value": "1"
+            },
+            {
+              "name": "country",
+              "value": "in"
+            },
+            {
+              "name": "date_posted",
+              "value": "week"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-rapidapi-host",
+              "value": "jsearch.p.rapidapi.com"
+            },
+            {
+              "name": "x-rapidapi-key",
+              "value": "6977b40f78msh671204cf9e06856p1c7ba0jsnc308cf8dac76"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c2615a79-7af8-4cca-8697-cfb69fc64ba8",
+      "name": "Search Jobs (JSearch API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -7488,
+        4240
+      ],
+      "notes": "FIXED: previously called /job-details with a hardcoded job_id and never sent the role/city query at all, so every run just re-fetched one fixed listing regardless of location. Now correctly calls /search with the per-combo query built upstream. country changed us -> in (JSearch scopes results by this param). date_posted widened 3days -> week to catch more candidates for the AI filter to evaluate. Fires once per role+city combo (2 roles x 4 cities = 8 calls/run) - watch RapidAPI free-tier quota. SECURITY: this key is hardcoded in the workflow JSON and was exposed in this file - rotate it on RapidAPI and move it to an n8n credential instead of a raw header."
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Build Search Queries (per city)').first().json;\n\nconst allItems = $input.all();\nconst jobs = [];\n\nfor (const item of allItems) {\n  const data = item.json?.data;\n\n  // Your API structure is:\n  // data -> jobs -> [...]\n  const results = Array.isArray(data)\n    ? data\n    : Array.isArray(data?.jobs)\n      ? data.jobs\n      : [];\n\n  for (const job of results) {\n    jobs.push({\n      job_id: job.job_id || '',\n      title: job.job_title || '',\n      company: job.employer_name || '',\n      location: job.job_city\n        ? `${job.job_city}, ${job.job_country || ''}`.replace(/,\\s*$/, '')\n        : (job.job_country || ''),\n\n      publisher: job.job_publisher || '',\n\n      description: (job.job_description || '').slice(0, 3000),\n\n      apply_link: job.job_apply_link || '',\n\n      is_direct_apply: job.job_apply_is_direct === true,\n\n      employer_website: job.employer_website || '',\n\n      candidatePhone: config.candidatePhone,\n      cvText: config.cvText,\n      matchThreshold: config.matchThreshold,\n\n      twilioWhatsappFrom: config.twilioWhatsappFrom,\n\n      currentCTC: config.currentCTC,\n      expectedCTC: config.expectedCTC,\n      noticePeriod: config.noticePeriod\n    });\n  }\n}\n\n\n// --------------------------------------------------\n// TITLE FILTER\n// --------------------------------------------------\n\nconst roleKeywords = [\n  'ai engineer',\n  'ml engineer',\n  'machine learning',\n  'artificial intelligence',\n  'ai/ml',\n  'ai ',\n  'ml '\n];\n\n\n// --------------------------------------------------\n// CITY ALIASES\n// --------------------------------------------------\n\nconst cityAliases = {\n  'delhi': [\n    'delhi',\n    'new delhi',\n    'ncr',\n    'delhi ncr',\n    'delhi-ncr'\n  ],\n\n  'gurugram': [\n    'gurugram',\n    'gurgaon'\n  ],\n\n  'noida': [\n    'noida',\n    'greater noida',\n    'noida ncr'\n  ],\n\n  'chandigarh': [\n    'chandigarh',\n    'chandigarh ncr',\n    'tricity',\n    'mohali'\n  ]\n};\n\n\nfunction expandCity(city) {\n  const key = (city || '').trim().toLowerCase();\n\n  return cityAliases[key] || [key];\n}\n\n\n// --------------------------------------------------\n// TITLE MATCH\n// --------------------------------------------------\n\nfunction titleMatches(title) {\n  const t = (title || '').toLowerCase();\n\n  return (\n    roleKeywords.some(keyword => t.includes(keyword)) &&\n    t.includes('engineer')\n  );\n}\n\n\n// --------------------------------------------------\n// LOCATION MATCH\n// --------------------------------------------------\n\nfunction locationMatches(location) {\n  const l = (location || '').toLowerCase();\n\n  const targetLocations = config.targetLocations || '';\n\n  const targetCities = targetLocations\n    .split(',')\n    .flatMap(expandCity)\n    .filter(Boolean);\n\n  return targetCities.some(city => l.includes(city));\n}\n\n\n// --------------------------------------------------\n// FILTER\n// --------------------------------------------------\n\nconst filtered = jobs.filter(job =>\n  titleMatches(job.title) &&\n  locationMatches(job.location)\n);\n\n\n// --------------------------------------------------\n// DEDUPLICATE\n// --------------------------------------------------\n\nconst seen = new Set();\n\nconst deduped = filtered.filter(job => {\n\n  // Prefer job_id for deduplication\n  const key = job.job_id ||\n    `${job.title}|${job.company}|${job.location}`.toLowerCase();\n\n  if (seen.has(key)) {\n    return false;\n  }\n\n  seen.add(key);\n  return true;\n});\n\n\n// --------------------------------------------------\n// n8n OUTPUT\n// --------------------------------------------------\n\nreturn deduped.map(job => ({\n  json: job\n}));"
+      },
+      "id": "c170c039-5178-4234-a690-130e76e620a0",
+      "name": "Normalize + Dedupe Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -7264,
+        4352
+      ],
+      "notes": "Runs once for all city results, flattens them, and removes duplicate job_ids. City matching now expands common aliases (Gurgaon<->Gurugram, New Delhi/NCR<->Delhi, etc.) since the previous literal substring match silently rejected real listings that used the old/alternate city name."
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "f66c8a7c-34f4-46d8-ab43-dffaa13d2a41",
+      "name": "Loop Jobs (One at a Time)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -7024,
+        4272
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1pwUkePBTxoPL33EoKThY1d4h4-HMSk4N-FKQD9ovV-A",
+          "mode": "list",
+          "cachedResultName": "Applied_Jobs",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pwUkePBTxoPL33EoKThY1d4h4-HMSk4N-FKQD9ovV-A/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pwUkePBTxoPL33EoKThY1d4h4-HMSk4N-FKQD9ovV-A/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "job_id",
+              "lookupValue": "={{ $json.job_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c8449164-a032-4d83-a05b-ecf043e45c4c",
+      "name": "Check If Already Seen (Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -6768,
+        4240
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "X4UQL4D2hEWwEQ4k",
+          "name": "Google Sheets account"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "IMPORTANT: your spreadsheet must have a tab literally named Applied_Jobs with headers: job_id, title, company, publisher, match_score, status, date, apply_link"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.job_id}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              },
+              "id": "a59becf0-fd89-478e-94b6-c8f90b3fc2b9"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b8ca125d-3b30-4011-831b-95b56e34cea4",
+      "name": "Already Seen?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -6624,
+        4080
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.output.match_score }}",
+              "rightValue": "={{ $('Normalize + Dedupe Jobs').item.json.matchThreshold }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              },
+              "id": "020ac5c8-042b-4071-89b3-e662d8b56275"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2be18f8c-04e1-4f00-816b-51965e4d3830",
+      "name": "Good Match?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -6144,
+        4080
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.found_email }}",
+              "rightValue": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "19206764-4314-4f1c-a4db-c8db11f40d3a",
+      "name": "Has Employer Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -5728,
+        4240
+      ],
+      "notes": "Branch 1 of 3: true = a genuine employer email was found (mailto/JD text/page scan) -> auto-apply by email. false = falls through to 'Has Apply Link?' next."
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.candidateEmail }}",
+        "toEmail": "={{ $json.found_email }}",
+        "subject": "={{'Application for ' + $json.title + ' - ' + $json.company}}",
+        "options": {
+          "attachments": "data"
+        }
+      },
+      "id": "11d16c9d-dd26-4f13-8218-9764db589654",
+      "name": "Auto Apply (Send Email + CV)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        -5424,
+        4288
+      ],
+      "webhookId": "71fad61a-bdce-48c8-9410-44fad99e9e38",
+      "continueOnFail": true,
+      "notes": "fromEmail now pulls from candidateEmail in Candidate Config automatically - no more hardcoded placeholder. toEmail is the employer address found by 'Find Employer Email (Autonomous)' (mailto/JD text/page scan) - never guessed. YOU STILL MUST: set your real address in Candidate Config's candidateEmail field, and connect real email-send credentials authorized to send AS that address on this node."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{'https://api.twilio.com/2010-04-01/Accounts/' + $vars.TWILIO_ACCOUNT_SID + '/Messages.json'}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "From",
+              "value": "={{$json.twilioWhatsappFrom}}"
+            },
+            {
+              "name": "To",
+              "value": "={{'whatsapp:' + $json.candidatePhone}}"
+            },
+            {
+              "name": "Body",
+              "value": "={{'✅ Applied for you via email to ' + $json.found_email + ': ' + $json.title + ' at ' + $json.company + '. Match score: ' + $json.match_score + '%.'}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0b65acd6-fb74-4484-a46b-efeb7bb5b97b",
+      "name": "WhatsApp: Notify Auto-Applied",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -5008,
+        4048
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{'https://api.twilio.com/2010-04-01/Accounts/' + $vars.TWILIO_ACCOUNT_SID + '/Messages.json'}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "From",
+              "value": "={{$json.twilioWhatsappFrom}}"
+            },
+            {
+              "name": "To",
+              "value": "={{'whatsapp:' + $json.candidatePhone}}"
+            },
+            {
+              "name": "Body",
+              "value": "={{'⚠️ Found a matching job on ' + $json.publisher + ': ' + $json.title + ' at ' + $json.company + ' (match ' + $json.match_score + '%).\\nThis site needs manual apply - please apply yourself here: ' + $json.apply_link + '\\n\\nIf asked screener questions, use:\\nCurrent CTC: ' + $json.currentCTC + '\\nExpected CTC: ' + $json.expectedCTC + '\\nNotice Period: ' + $json.noticePeriod}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "64d95cf7-f2fb-4093-83ed-f2a0e9a62062",
+      "name": "WhatsApp: Notify Manual Apply Needed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -5504,
+        4416
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "https://docs.google.com/spreadsheets/d/1pwUkePBTxoPL33EoKThY1d4h4-HMSk4N-FKQD9ovV-A/edit?usp=sharing"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "job_id": "={{$json.job_id}}",
+            "title": "={{$json.title}}",
+            "company": "={{$json.company}}",
+            "publisher": "={{$json.publisher}}",
+            "match_score": "={{$json.match_score}}",
+            "status": "={{ ($json.found_email && $json.found_email.length > 0) ? 'auto_applied_email' : (($json.apply_link && $json.apply_link.length > 0) ? 'manual_notify_sent' : 'no_apply_method_found') }}",
+            "date": "={{$now.toISO()}}",
+            "apply_link": "={{$json.apply_link}}"
+          }
+        },
+        "options": {}
+      },
+      "id": "45bb204e-29e6-4002-8e4d-02dd857f006a",
+      "name": "Log to Google Sheets (Memory)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -4784,
+        4416
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "X4UQL4D2hEWwEQ4k",
+          "name": "Google Sheets account"
+        }
+      },
+      "notes": "FIXED: sheetName was 'Applied_Jobs' - that's the SPREADSHEET's file name, not a tab. The actual tab in this sheet is 'Sheet1', matching what 'Check If Already Seen (Sheets)' reads from. Without this fix, applications would be logged to a non-existent tab while the lookup keeps checking Sheet1, so nothing would ever register as 'already seen'."
+    },
+    {
+      "parameters": {},
+      "id": "238135e8-2aa9-43e5-9928-8ba4ab51ff3f",
+      "name": "Skip (Already Seen or Low Match)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -6400,
+        3936
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Re-attach the CV PDF binary that was downloaded at the start of the workflow.\n// By this point (deep in the per-job loop) only JSON has been carried forward -\n// Set/Code nodes along the way don't pass binary data through automatically.\nconst items = $input.all();\nconst cvBinary = $('Download CV PDF (Google Drive)').first().binary;\nreturn items.map(item => ({ json: item.json, binary: cvBinary }));"
+      },
+      "id": "c25f56d8-cf20-4dfd-8e3e-9745e2cebfdd",
+      "name": "Attach CV Resume Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5472,
+        3984
+      ],
+      "notes": "Pulls the CV binary straight from the 'Download CV PDF (Google Drive)' node earlier in the workflow and attaches it to this job's item, so the email node can send the actual resume - no manual UI attachment step needed, and no separate/duplicate file is created."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Autonomous employer-email discovery. Tries, in order:\n// 1) a real mailto: link on the posting itself\n// 2) an email address written directly in the job description text\n// 3) fetching the PUBLIC job page (no login) and scanning its HTML\n// LinkedIn is skipped for step 3 on purpose - its pages require a logged-in session,\n// and automating a login to scrape it would violate LinkedIn's Terms of Service and\n// risk the account being banned. Those jobs correctly fall through with no email found,\n// which routes them to the WhatsApp manual-apply path further down the workflow.\n// This node now receives the Match Score Agent's raw {output:{match_score,reason}} item,\n// not the full job record - rebuild it here from 'Normalize + Dedupe Jobs' (base job fields)\n// and 'Build Search Queries (per city)' (candidateEmail), then parse the agent's score.\nconst baseJob = $('Normalize + Dedupe Jobs').item.json;\nconst cfg = $('Build Search Queries (per city)').first().json;\n\nlet scoreOut = { match_score: 0, reason: 'parse_failed' };\ntry {\n  const out = $input.item.json.output;\n  const parsed = typeof out === 'string' ? JSON.parse(out.replace(/```json|```/g, '').trim()) : out;\n  scoreOut = { ...scoreOut, ...parsed };\n} catch (e) {}\n\nconst job = {\n  ...baseJob,\n  candidateEmail: cfg.candidateEmail || '',\n  match_score: scoreOut.match_score,\n  reason: scoreOut.reason\n};\n\nconst emailPattern = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/;\nlet foundEmail = '';\n\n// 1. mailto: on the apply link itself\nconst mailtoMatch = (job.apply_link || '').match(/^mailto:([^?\\s]+)/i);\nif (mailtoMatch && emailPattern.test(mailtoMatch[1])) {\n  foundEmail = mailtoMatch[1].trim();\n}\n\n// 2. email written in the job description text\nif (!foundEmail) {\n  const descMatch = (job.description || '').match(emailPattern);\n  if (descMatch) foundEmail = descMatch[0];\n}\n\n// 3. last resort - fetch the public job page and scan its HTML (skip LinkedIn: login-gated)\nconst isLoginGated = /linkedin\\.com/i.test(job.apply_link || '');\nif (!foundEmail && job.apply_link && !isLoginGated) {\n  try {\n    const html = await this.helpers.httpRequest({\n      method: 'GET',\n      url: job.apply_link,\n      timeout: 8000\n    });\n    const text = typeof html === 'string' ? html : JSON.stringify(html);\n    const mailtoInPage = text.match(/mailto:([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/i);\n    const rawEmailInPage = text.match(emailPattern);\n    if (mailtoInPage) foundEmail = mailtoInPage[1];\n    else if (rawEmailInPage) foundEmail = rawEmailInPage[0];\n  } catch (e) {\n    // page unreachable/blocked - fine, just means no email found here, falls to manual apply\n  }\n}\n\nreturn [{ json: { ...job, found_email: foundEmail } }];"
+      },
+      "id": "a23b6328-6c9e-4ca1-a2d0-5530d881827c",
+      "name": "Find Employer Email (Autonomous)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5872,
+        3920
+      ],
+      "notes": "Only jobs that already passed AI match threshold reach here (saves unnecessary page fetches). Tries mailto link, then JD text, then a no-login page scan, in that order. Deliberately skips scraping LinkedIn (login-gated - would require automating a real login, which violates LinkedIn's ToS and risks the account). Sets found_email='' when genuinely nothing is found, which the next node uses to route to WhatsApp manual-apply instead of guessing an address. | UPDATED: rebuilds the job record from 'Normalize + Dedupe Jobs' + 'Build Search Queries (per city)' and parses the Match Score Agent's structured output, since the removed 'Parse AI Response' node no longer does this merge."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.apply_link }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "id": "1d0bd146-ab4a-47a7-b690-57c8668153b7",
+      "name": "Has Apply Link?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -5248,
+        3792
+      ],
+      "notes": "Branch 2 of 3: only reached when no employer email was found. true = a direct apply link exists (covers almost every Indeed/Naukri/LinkedIn/Shine posting) -> WhatsApp the link for the user to apply manually. false = no email AND no link -> 'no apply method' notice."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{'https://api.twilio.com/2010-04-01/Accounts/' + $vars.TWILIO_ACCOUNT_SID + '/Messages.json'}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "From",
+              "value": "={{$json.twilioWhatsappFrom}}"
+            },
+            {
+              "name": "To",
+              "value": "={{'whatsapp:' + $json.candidatePhone}}"
+            },
+            {
+              "name": "Body",
+              "value": "={{'🔎 Found a matching job but no apply email or link was available: ' + $json.title + ' at ' + $json.company + ' (match ' + $json.match_score + '%). Publisher: ' + $json.publisher + '. You may need to search for it manually.'}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6324b3ca-a503-4e53-b6ec-f32173916b44",
+      "name": "WhatsApp: Notify No Apply Method Found",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -5152,
+        4256
+      ],
+      "continueOnFail": true,
+      "notes": "Branch 3 of 3: fires only when a job passed AI matching but has neither a real employer email nor a usable apply link - so the user still hears about it instead of it silently vanishing."
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.text }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a resume-parsing assistant. You will receive raw, unformatted text extracted from a candidate's CV/resume PDF. Extract the candidate's profile accurately. Rules:\n- total_experience_years: sum actual work experience only (exclude internships unless no other experience exists). Estimate from dates if not stated explicitly.\n- top_skills: the candidate's strongest 5-8 skills, prioritizing what's emphasized or repeated across roles/projects.\n- key_technologies: specific tools, frameworks, languages, platforms mentioned (e.g. \"LangGraph\", \"Python\", \"AWS EC2\") - not soft skills.\n- certifications: only formal certifications/courses explicitly named. Empty array if none found.\n- education: highest degree + institution + year, as a single string.\n- summary: 2-3 sentences capturing seniority level, domain expertise, and specialization.\n- email: the candidate's own contact email address, exactly as written in the CV. Empty string if none found.\n- phone: the candidate's own contact phone number, exactly as written in the CV (keep the country code/format as given). Empty string if none found.\n- If a field genuinely cannot be determined, use an empty string, empty array, or 0 - never invent information."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -8032,
+        3904
+      ],
+      "id": "b8bed26e-7a6d-4b9e-87c9-bd887e3c2c66",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": "=nvidia/nemotron-3.5-lightning-30b-a3b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatNvidia",
+      "typeVersion": 1,
+      "position": [
+        -8080,
+        4272
+      ],
+      "id": "f5563f73-aead-40b9-8174-a60b91139e49",
+      "name": "NVIDIA Nemotron Chat Model",
+      "credentials": {
+        "nvidiaApi": {
+          "id": "i1M43bWhoC7cMdy3",
+          "name": "NVIDIA Nemotron account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"candidate_name\": {\n      \"type\": \"string\"\n    },\n    \"total_experience_years\": {\n      \"type\": \"number\"\n    },\n    \"current_title\": {\n      \"type\": \"string\"\n    },\n    \"top_skills\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"key_technologies\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"certifications\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"education\": {\n      \"type\": \"string\"\n    },\n    \"summary\": {\n      \"type\": \"string\"\n    },\n    \"email\": {\n      \"type\": \"string\"\n    },\n    \"phone\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"candidate_name\",\n    \"total_experience_years\",\n    \"current_title\",\n    \"top_skills\",\n    \"key_technologies\",\n    \"certifications\",\n    \"education\",\n    \"summary\",\n    \"email\",\n    \"phone\"\n  ]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        -7904,
+        4272
+      ],
+      "id": "60e18782-3abb-46cd-a28a-a44d37b07497",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "hasOutputParser": true,
+        "text": "=CV:\n{{ $json.cvText }}\n\nCandidate expected CTC: {{ $json.expectedCTC }} (current: {{ $json.currentCTC }}, notice period: {{ $json.noticePeriod }})\n\nJOB TITLE: {{ $json.title }}\nCOMPANY: {{ $json.company }}\nJOB DESCRIPTION:\n{{ $json.description }}",
+        "options": {
+          "systemMessage": "You are a strict job-matching assistant. Compare the candidate CV to the job description and produce a match score. Rules:\n- match_score: an integer from 0-100 rating how well the candidate's CV fits the job.\n- reason: one short sentence explaining the score.\n- If the job description mentions a salary range clearly below the candidate's expected CTC, reduce the match_score and mention it in the reason.\n- Never invent information not present in the CV or job description."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -1760,
+        3728
+      ],
+      "id": "a1b2c3d4-0001-4a11-9a11-match0000001",
+      "name": "Match Score Agent"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"match_score\": {\n      \"type\": \"number\"\n    },\n    \"reason\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"match_score\",\n    \"reason\"\n  ]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        -1680,
+        3900
+      ],
+      "id": "a1b2c3d4-0002-4a11-9a11-match0000002",
+      "name": "Match Score Output Parser"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily Trigger (9AM)": {
+      "main": [
+        [
+          {
+            "node": "Candidate Config (edit me)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Candidate Config (edit me)": {
+      "main": [
+        [
+          {
+            "node": "Download CV PDF (Google Drive)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download CV PDF (Google Drive)": {
+      "main": [
+        [
+          {
+            "node": "Extract Text from CV PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Text from CV PDF": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Search Queries (per city)": {
+      "main": [
+        [
+          {
+            "node": "Search Jobs (JSearch API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Jobs (JSearch API)": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Dedupe Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize + Dedupe Jobs": {
+      "main": [
+        [
+          {
+            "node": "Loop Jobs (One at a Time)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Jobs (One at a Time)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Check If Already Seen (Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If Already Seen (Sheets)": {
+      "main": [
+        [
+          {
+            "node": "Already Seen?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Seen?": {
+      "main": [
+        [
+          {
+            "node": "Skip (Already Seen or Low Match)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Match Score Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Good Match?": {
+      "main": [
+        [
+          {
+            "node": "Find Employer Email (Autonomous)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip (Already Seen or Low Match)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto Apply (Send Email + CV)": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp: Notify Auto-Applied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp: Notify Auto-Applied": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets (Memory)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp: Notify Manual Apply Needed": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets (Memory)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to Google Sheets (Memory)": {
+      "main": [
+        [
+          {
+            "node": "Loop Jobs (One at a Time)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip (Already Seen or Low Match)": {
+      "main": [
+        [
+          {
+            "node": "Loop Jobs (One at a Time)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach CV Resume Binary": {
+      "main": [
+        [
+          {
+            "node": "Auto Apply (Send Email + CV)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Employer Email (Autonomous)": {
+      "main": [
+        [
+          {
+            "node": "Has Employer Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Employer Email?": {
+      "main": [
+        [
+          {
+            "node": "Attach CV Resume Binary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has Apply Link?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Apply Link?": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp: Notify Manual Apply Needed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "WhatsApp: Notify No Apply Method Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp: Notify No Apply Method Found": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets (Memory)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NVIDIA Nemotron Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Match Score Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Build Search Queries (per city)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match Score Agent": {
+      "main": [
+        [
+          {
+            "node": "Good Match?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match Score Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Match Score Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "30dc0c1e-ab48-4117-9212-ce55f4d6544e",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4dd29566f4ae8f204a39dae2da429ed43c62e15dfbe0a8806e0381e10c19fc24"
+  },
+  "nodeGroups": [],
+  "id": "HZfT71NcVy3s0PdD",
+  "tags": []
+}
