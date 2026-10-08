@@ -1,0 +1,71 @@
+%%{init: {"theme": "base", "themeVariables": {"darkMode": true, "background": "#1e1e24", "primaryColor": "#2b2b35", "primaryTextColor": "#fff", "primaryBorderColor": "#555", "lineColor": "#888"}}}%%
+graph TD
+    classDef default fill:#2b2b35,stroke:#555,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef trigger fill:#234a36,stroke:#3bb46e,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef ai fill:#3d235e,stroke:#8e55ea,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef core fill:#1a3d5c,stroke:#3b82f6,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef alert fill:#5c2b29,stroke:#ef4444,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    AIAgent["AI Agent"]:::ai --> Finalize["Finalize"]:::core
+    AuditEachRepo["Audit Each Repo"]:::core --> OrgSummary["Org Summary"]:::core
+    AuditorPRMerged["Auditor PR Merged?"]:::core --> RespondAck["Respond Ack"]:::trigger
+    AuditorPRMerged["Auditor PR Merged?"]:::core --> RespondIgnored["Respond Ignored"]:::trigger
+    BuildAIPrompt["Build AI Prompt"]:::core --> AIAgent["AI Agent"]:::ai
+    BuildApproval["Build Approval"]:::core --> SlackApproval["Slack Approval"]:::alert
+    BuildIssue["Build Issue"]:::core --> CreateIssue["Create Issue"]:::core
+    BuildPatches["Build Patches"]:::core --> HasPatches["Has Patches?"]:::core
+    CalledbyOrgRun["Called by Org Run"]:::trigger --> ValidateInput["Validate Input"]:::core
+    CheckExistingPR["Check Existing PR"]:::core --> PRAlreadyOpen["PR Already Open?"]:::core
+    CollectRefs["Collect Refs"]:::core --> ResolveSHA["Resolve SHA"]:::core
+    CreateBranch["Create Branch"]:::core --> OpenPR["Open PR"]:::core
+    CreateCommit["Create Commit"]:::core --> CreateBranch["Create Branch"]:::core
+    CreateIssue["Create Issue"]:::core --> IssueNotice["Issue Notice"]:::core
+    CreateTree["Create Tree"]:::core --> CreateCommit["Create Commit"]:::core
+    Decide["Decide"]:::core --> RouteAction["Route Action"]:::core
+    FallbackNotice["Fallback Notice"]:::core --> SlackNotice["Slack Notice"]:::alert
+    FetchFile["Fetch File"]:::core --> RuleEngine["Rule Engine"]:::core
+    FilterRepos["Filter Repos"]:::core --> AuditEachRepo["Audit Each Repo"]:::core
+    Finalize["Finalize"]:::core --> ToplevelRun["Top-level Run?"]:::core
+    GetActionsPermissions["Get Actions Permissions"]:::core --> GetTree["Get Tree"]:::core
+    GetBaseCommit["Get Base Commit"]:::core --> CollectRefs["Collect Refs"]:::core
+    GetRepoMeta["Get Repo Meta"]:::core --> GetActionsPermissions["Get Actions Permissions"]:::core
+    GetRepoMeta["Get Repo Meta"]:::core --> RespondRepoError["Respond Repo Error"]:::trigger
+    GetTree["Get Tree"]:::core --> SelectFiles["Select Files"]:::core
+    GitHubMergeWebhook["GitHub Merge Webhook"]:::trigger --> VerifyMergeEvent["Verify Merge Event"]:::core
+    GroqChatModel["Groq Chat Model"]:::ai --> AIAgent["AI Agent"]:::ai
+    HasFindings["Has Findings?"]:::core --> BuildAIPrompt["Build AI Prompt"]:::core
+    HasFindings["Has Findings?"]:::core --> Finalize["Finalize"]:::core
+    HasPatches["Has Patches?"]:::core --> CreateTree["Create Tree"]:::core
+    HasPatches["Has Patches?"]:::core --> SlackNotice["Slack Notice"]:::alert
+    InputValid["Input Valid?"]:::core --> OrgMode["Org Mode?"]:::core
+    InputValid["Input Valid?"]:::core --> Respond400["Respond 400"]:::trigger
+    IssueNotice["Issue Notice"]:::core --> SlackNotice["Slack Notice"]:::alert
+    ListOpenPRs["List Open PRs"]:::core --> CheckExistingPR["Check Existing PR"]:::core
+    ListOrgRepos["List Org Repos"]:::core --> FilterRepos["Filter Repos"]:::core
+    NeedsApproval["Needs Approval?"]:::core --> BuildApproval["Build Approval"]:::core
+    OpenPR["Open PR"]:::core --> PRNotice["PR Notice"]:::core
+    OrgMode["Org Mode?"]:::core --> GetRepoMeta["Get Repo Meta"]:::core
+    OrgMode["Org Mode?"]:::core --> Respond202["Respond 202"]:::trigger
+    OrgSummary["Org Summary"]:::core --> SlackOrgReport["Slack Org Report"]:::alert
+    PRAlreadyOpen["PR Already Open?"]:::core --> GetBaseCommit["Get Base Commit"]:::core
+    PRAlreadyOpen["PR Already Open?"]:::core --> SlackNotice["Slack Notice"]:::alert
+    PRNotice["PR Notice"]:::core --> SlackNotice["Slack Notice"]:::alert
+    ReauditNotice["Re-audit Notice"]:::core --> SlackReaudit["Slack Re-audit"]:::alert
+    ReauditRepo["Re-audit Repo"]:::core --> ReauditNotice["Re-audit Notice"]:::core
+    RecordAcceptedRisk["Record Accepted Risk"]:::core --> SlackNotice["Slack Notice"]:::alert
+    ResolveSHA["Resolve SHA"]:::core --> BuildPatches["Build Patches"]:::core
+    Respond202["Respond 202"]:::trigger --> ListOrgRepos["List Org Repos"]:::core
+    RespondAck["Respond Ack"]:::trigger --> ReauditRepo["Re-audit Repo"]:::core
+    RespondOK["Respond OK"]:::trigger --> SlackReport["Slack Report"]:::alert
+    RouteAction["Route Action"]:::core --> BuildIssue["Build Issue"]:::core
+    RouteAction["Route Action"]:::core --> FallbackNotice["Fallback Notice"]:::core
+    RouteAction["Route Action"]:::core --> ListOpenPRs["List Open PRs"]:::core
+    RouteAction["Route Action"]:::core --> RecordAcceptedRisk["Record Accepted Risk"]:::core
+    RuleEngine["Rule Engine"]:::core --> HasFindings["Has Findings?"]:::core
+    SelectFiles["Select Files"]:::core --> FetchFile["Fetch File"]:::core
+    SlackApproval["Slack Approval"]:::alert --> Decide["Decide"]:::core
+    SlackReport["Slack Report"]:::alert --> NeedsApproval["Needs Approval?"]:::core
+    StructuredOutputParser["Structured Output Parser"]:::ai --> AIAgent["AI Agent"]:::ai
+    ToplevelRun["Top-level Run?"]:::core --> RespondOK["Respond OK"]:::trigger
+    ValidateInput["Validate Input"]:::core --> InputValid["Input Valid?"]:::core
+    VerifyMergeEvent["Verify Merge Event"]:::core --> AuditorPRMerged["Auditor PR Merged?"]:::core
+    Webhook["Webhook"]:::trigger --> ValidateInput["Validate Input"]:::core

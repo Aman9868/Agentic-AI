@@ -1,6 +1,6 @@
 # 🤖 Agentic-AI: Autonomous AI Agents & Workflows
 
-A repository of production-ready, autonomous AI agents and n8n workflows for cybersecurity, e-commerce, and productivity automation.
+A collection of production-ready, autonomous AI agents and n8n workflows for cybersecurity, e-commerce, and productivity automation.
 
 ---
 
@@ -9,9 +9,9 @@ A repository of production-ready, autonomous AI agents and n8n workflows for cyb
 ### 🛡️ [Cybersecurity AI Agents Suite](./cybersecurity/)
 Autonomous agents and workflows designed to defend infrastructure, codebases, and communications:
 
-- **[Attack Surface Monitor (ASM)](./cybersecurity/README.md#1--attack-surface-monitor-asm)**: Continuous external asset enumeration using Certificate Transparency, DNS-over-HTTPS, Shodan InternetDB, and CISA KEV with automated Slack briefings.
-- **[CI/CD Pipeline Security Auditor v3](./cybersecurity/README.md#2--cicd-pipeline-security-auditor-v3)**: Static analysis of GitHub Actions workflows, risk scoring, and interactive human-in-the-loop Slack approval to dispatch automated remediation PRs.
-- **[Leaked Secret Scanner](./cybersecurity/README.md#3--leaked-secret-scanner)**: Deep git repository and commit diff scanner with 25+ secret patterns, Shannon entropy detection, AI triage, and Slack incident reporting.
+- **[Attack Surface Monitor (ASM)](./cybersecurity/attack_surface_monitor/)**: Continuous external perimeter and asset enumeration using Certificate Transparency, DNS-over-HTTPS, Shodan InternetDB, and CISA KEV with automated Slack briefings.
+- **[CI/CD Pipeline Security Auditor v3](./cybersecurity/cicd_pipeline_security/)**: Static analysis of GitHub Actions workflows, supply chain risk scoring, and interactive human-in-the-loop Slack approval to dispatch automated remediation PRs.
+- **[Leaked Secret & Credential Scanner](./cybersecurity/leaked_secret_scanner/)**: Deep git repository and commit diff scanner with 25+ secret patterns, Shannon entropy detection, AI false-positive triage, and Slack incident reporting.
 - **[Phishing Triage Agent](./cybersecurity/phishing_tirage/)**: Autonomous email ingestion, Groq LLM IOC extraction, VirusTotal/URLScan verification, and multi-channel alerting.
 
 ### 🛒 [E-Commerce Chat & Support Agent](./ecommerce_chat_agent/)

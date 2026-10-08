@@ -1,0 +1,34 @@
+%%{init: {"theme": "base", "themeVariables": { "darkMode": true, "background": "#1e1e24", "primaryColor": "#2b2b35", "primaryTextColor": "#fff", "primaryBorderColor": "#555", "lineColor": "#888"}}}%%
+graph TD
+    classDef default fill:#2b2b35,stroke:#555,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef trigger fill:#234a36,stroke:#3bb46e,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef ai fill:#3d235e,stroke:#8e55ea,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef core fill:#1a3d5c,stroke:#3b82f6,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef osint fill:#5c2b29,stroke:#ef4444,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    DailyTrigger9AM["Daily Trigger (9AM)"]:::trigger --> CandidateConfigeditme["Candidate Config (edit me)"]:::core
+    CandidateConfigeditme["Candidate Config (edit me)"]:::core --> DownloadCVPDFGoogleDrive["Download CV PDF (Google Drive)"]:::core
+    DownloadCVPDFGoogleDrive["Download CV PDF (Google Drive)"]:::core --> ExtractTextfromCVPDF["Extract Text from CV PDF"]:::core
+    ExtractTextfromCVPDF["Extract Text from CV PDF"]:::core --> AIAgent["AI Agent"]:::ai
+    BuildSearchQueriespercity["Build Search Queries (per city)"]:::core --> SearchJobsJSearchAPI["Search Jobs (JSearch API)"]:::core
+    SearchJobsJSearchAPI["Search Jobs (JSearch API)"]:::core --> NormalizeDedupeJobs["Normalize + Dedupe Jobs"]:::core
+    NormalizeDedupeJobs["Normalize + Dedupe Jobs"]:::core --> LoopJobsOneataTime["Loop Jobs (One at a Time)"]:::core
+    LoopJobsOneataTime["Loop Jobs (One at a Time)"]:::core --> CheckIfAlreadySeenSheets["Check If Already Seen (Sheets)"]:::core
+    CheckIfAlreadySeenSheets["Check If Already Seen (Sheets)"]:::core --> AlreadySeen["Already Seen?"]:::core
+    AlreadySeen["Already Seen?"]:::core --> SkipAlreadySeenorLowMatch["Skip (Already Seen or Low Match)"]:::core
+    AlreadySeen["Already Seen?"]:::core --> MatchScoreAgent["Match Score Agent"]:::ai
+    GoodMatch["Good Match?"]:::core --> FindEmployerEmailAutonomous["Find Employer Email (Autonomous)"]:::ai
+    GoodMatch["Good Match?"]:::core --> SkipAlreadySeenorLowMatch["Skip (Already Seen or Low Match)"]:::core
+    AutoApplySendEmailCV["Auto Apply (Send Email + CV)"]:::ai --> WhatsAppNotifyAutoApplied["WhatsApp: Notify Auto-Applied"]:::osint
+    WhatsAppNotifyAutoApplied["WhatsApp: Notify Auto-Applied"]:::osint --> LogtoGoogleSheetsMemory["Log to Google Sheets (Memory)"]:::core
+    WhatsAppNotifyManualApplyNeeded["WhatsApp: Notify Manual Apply Needed"]:::osint --> LogtoGoogleSheetsMemory["Log to Google Sheets (Memory)"]:::core
+    LogtoGoogleSheetsMemory["Log to Google Sheets (Memory)"]:::core --> LoopJobsOneataTime["Loop Jobs (One at a Time)"]:::core
+    SkipAlreadySeenorLowMatch["Skip (Already Seen or Low Match)"]:::core --> LoopJobsOneataTime["Loop Jobs (One at a Time)"]:::core
+    AttachCVResumeBinary["Attach CV Resume Binary"]:::core --> AutoApplySendEmailCV["Auto Apply (Send Email + CV)"]:::ai
+    FindEmployerEmailAutonomous["Find Employer Email (Autonomous)"]:::ai --> HasEmployerEmail["Has Employer Email?"]:::ai
+    HasEmployerEmail["Has Employer Email?"]:::ai --> AttachCVResumeBinary["Attach CV Resume Binary"]:::core
+    HasEmployerEmail["Has Employer Email?"]:::ai --> HasApplyLink["Has Apply Link?"]:::core
+    HasApplyLink["Has Apply Link?"]:::core --> WhatsAppNotifyManualApplyNeeded["WhatsApp: Notify Manual Apply Needed"]:::osint
+    HasApplyLink["Has Apply Link?"]:::core --> WhatsAppNotifyNoApplyMethodFound["WhatsApp: Notify No Apply Method Found"]:::osint
+    WhatsAppNotifyNoApplyMethodFound["WhatsApp: Notify No Apply Method Found"]:::osint --> LogtoGoogleSheetsMemory["Log to Google Sheets (Memory)"]:::core
+    AIAgent["AI Agent"]:::ai --> BuildSearchQueriespercity["Build Search Queries (per city)"]:::core
+    MatchScoreAgent["Match Score Agent"]:::ai --> GoodMatch["Good Match?"]:::core

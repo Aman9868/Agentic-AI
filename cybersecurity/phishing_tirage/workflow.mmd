@@ -1,0 +1,61 @@
+%%{init: {"theme": "base", "themeVariables": { "darkMode": true, "background": "#1e1e24", "primaryColor": "#2b2b35", "primaryTextColor": "#fff", "primaryBorderColor": "#555", "lineColor": "#888"}}}%%
+graph TD
+    classDef default fill:#2b2b35,stroke:#555,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef trigger fill:#234a36,stroke:#3bb46e,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef ai fill:#3d235e,stroke:#8e55ea,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef core fill:#1a3d5c,stroke:#3b82f6,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef osint fill:#5c2b29,stroke:#ef4444,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    GmailTrigger["📧 Gmail Trigger"]:::trigger --> FetchFullEmail["📨 Fetch Full Email"]:::ai
+    FetchFullEmail["📨 Fetch Full Email"]:::ai --> EmailEnricher["🔍 Email Enricher"]:::ai
+    EmailEnricher["🔍 Email Enricher"]:::ai --> PrepareOSINTTargets["🧩 Prepare OSINT Targets"]:::osint
+    AIPrep["🎯 AI Prep"]:::ai --> AIAgent["🤖 AI Agent"]:::ai
+    AIAgent["🤖 AI Agent"]:::ai --> ProcessAIOutput["⚙️ Process AI Output"]:::ai
+    ProcessAIOutput["⚙️ Process AI Output"]:::ai --> RoutebyVerdict["🔀 Route by Verdict"]:::core
+    RoutebyVerdict["🔀 Route by Verdict"]:::core --> TelegramCriticalAlert["🚨 Telegram Critical Alert"]:::core
+    RoutebyVerdict["🔀 Route by Verdict"]:::core --> QuarantineEmail["🚫 Quarantine Email"]:::ai
+    RoutebyVerdict["🔀 Route by Verdict"]:::core --> SearchAllMailboxes["🔎 Search All Mailboxes"]:::ai
+    RoutebyVerdict["🔀 Route by Verdict"]:::core --> LogtoSheets["📊 Log to Sheets"]:::core
+    RoutebyVerdict["🔀 Route by Verdict"]:::core --> NotifyUser["📧 Notify User"]:::core
+    RoutebyVerdict["🔀 Route by Verdict"]:::core --> CreateTicket["🎫 Create Ticket"]:::core
+    RoutebyVerdict["🔀 Route by Verdict"]:::core --> TelegramSuspicious["⚠️ Telegram Suspicious"]:::core
+    RoutebyVerdict["🔀 Route by Verdict"]:::core --> LogSuspicious["📊 Log Suspicious"]:::core
+    RoutebyVerdict["🔀 Route by Verdict"]:::core --> TelegramSafe["✅ Telegram Safe"]:::core
+    RoutebyVerdict["🔀 Route by Verdict"]:::core --> LogAll["📊 Log All"]:::core
+    RoutebyVerdict["🔀 Route by Verdict"]:::core --> TelegramUnknown["❓ Telegram Unknown"]:::core
+    RoutebyVerdict["🔀 Route by Verdict"]:::core --> LogAll["📊 Log All"]:::core
+    CreateTicket["🎫 Create Ticket"]:::core --> SendTickettoITSM["🎫 Send Ticket to ITSM"]:::core
+    PrepareOSINTTargets["🧩 Prepare OSINT Targets"]:::osint --> HasDomain["🔀 Has Domain?"]:::ai
+    RDAPWHOISLookup["🌐 RDAP WHOIS Lookup"]:::osint --> ParseDomainAge["📆 Parse Domain Age"]:::ai
+    ParseDomainAge["📆 Parse Domain Age"]:::ai --> ComputeVTURLID["🔑 Compute VT URL ID"]:::core
+    ComputeVTURLID["🔑 Compute VT URL ID"]:::core --> VirusTotalURLReport["🦠 VirusTotal URL Report"]:::osint
+    VirusTotalURLReport["🦠 VirusTotal URL Report"]:::osint --> ParseVTURLResult["🦠 Parse VT URL Result"]:::core
+    ParseVTURLResult["🦠 Parse VT URL Result"]:::core --> URLScanioSubmit["📷 URLScan.io Submit"]:::osint
+    URLScanioSubmit["📷 URLScan.io Submit"]:::osint --> ParseURLScanSubmission["📷 Parse URLScan Submission"]:::osint
+    ParseURLScanSubmission["📷 Parse URLScan Submission"]:::osint --> SerperDomainSearch["🔎 Serper Domain Search"]:::ai
+    SerperDomainSearch["🔎 Serper Domain Search"]:::ai --> ParseDomainSearch["🔎 Parse Domain Search"]:::ai
+    ParseDomainSearch["🔎 Parse Domain Search"]:::ai --> HasSenderDomain["🔀 Has Sender Domain?"]:::ai
+    CheckSenderAllowlist["📋 Check Sender Allowlist"]:::core --> ParseAllowlistResult["📋 Parse Allowlist Result"]:::core
+    ParseAllowlistResult["📋 Parse Allowlist Result"]:::core --> CheckSenderHistory["📜 Check Sender History"]:::core
+    CheckSenderHistory["📜 Check Sender History"]:::core --> ParseSenderHistory["📜 Parse Sender History"]:::core
+    ParseSenderHistory["📜 Parse Sender History"]:::core --> SerperSenderReputation["🔎 Serper Sender Reputation"]:::core
+    SerperSenderReputation["🔎 Serper Sender Reputation"]:::core --> ParseSenderReputation["🔎 Parse Sender Reputation"]:::core
+    ParseSenderReputation["🔎 Parse Sender Reputation"]:::core --> HasAttachment["🔀 Has Attachment?"]:::core
+    HasAttachment["🔀 Has Attachment?"]:::core --> DownloadAttachment["📎 Download Attachment"]:::core
+    HasAttachment["🔀 Has Attachment?"]:::core --> NoAttachmentDefault["📎 No Attachment Default"]:::core
+    DownloadAttachment["📎 Download Attachment"]:::core --> HashAttachment["🔐 Hash Attachment"]:::core
+    HashAttachment["🔐 Hash Attachment"]:::core --> HasHash["🔀 Has Hash?"]:::core
+    ExtractAttachmentText["📄 Extract Attachment Text"]:::core --> ParsePDFTextFlags["📄 Parse PDF Text Flags"]:::core
+    ParsePDFTextFlags["📄 Parse PDF Text Flags"]:::core --> VirusTotalFileHashLookup["🦠 VirusTotal File Hash Lookup"]:::osint
+    VirusTotalFileHashLookup["🦠 VirusTotal File Hash Lookup"]:::osint --> ParseVTFileResult["🦠 Parse VT File Result"]:::core
+    ParseVTFileResult["🦠 Parse VT File Result"]:::core --> MergeOSINTFindings["🧬 Merge OSINT Findings"]:::osint
+    NoAttachmentDefault["📎 No Attachment Default"]:::core --> MergeOSINTFindings["🧬 Merge OSINT Findings"]:::osint
+    MergeOSINTFindings["🧬 Merge OSINT Findings"]:::osint --> AIPrep["🎯 AI Prep"]:::ai
+    HasDomain["🔀 Has Domain?"]:::ai --> RDAPWHOISLookup["🌐 RDAP WHOIS Lookup"]:::osint
+    HasDomain["🔀 Has Domain?"]:::ai --> NoURLDefault["🌐 No URL Default"]:::core
+    NoURLDefault["🌐 No URL Default"]:::core --> HasSenderDomain["🔀 Has Sender Domain?"]:::ai
+    HasSenderDomain["🔀 Has Sender Domain?"]:::ai --> CheckSenderAllowlist["📋 Check Sender Allowlist"]:::core
+    HasSenderDomain["🔀 Has Sender Domain?"]:::ai --> NoSenderDomainDefault["📋 No Sender Domain Default"]:::ai
+    NoSenderDomainDefault["📋 No Sender Domain Default"]:::ai --> HasAttachment["🔀 Has Attachment?"]:::core
+    HasHash["🔀 Has Hash?"]:::core --> ExtractAttachmentText["📄 Extract Attachment Text"]:::core
+    HasHash["🔀 Has Hash?"]:::core --> NoHashDefault["🔐 No Hash Default"]:::core
+    NoHashDefault["🔐 No Hash Default"]:::core --> MergeOSINTFindings["🧬 Merge OSINT Findings"]:::osint

@@ -1,0 +1,29 @@
+%%{init: {"theme": "base", "themeVariables": { "darkMode": true, "background": "#1e1e24", "primaryColor": "#2b2b35", "primaryTextColor": "#fff", "primaryBorderColor": "#555", "lineColor": "#888"}}}%%
+graph TD
+    classDef default fill:#2b2b35,stroke:#555,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef trigger fill:#234a36,stroke:#3bb46e,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef ai fill:#3d235e,stroke:#8e55ea,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef core fill:#1a3d5c,stroke:#3b82f6,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef osint fill:#5c2b29,stroke:#ef4444,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    Webhook["Webhook"]:::trigger --> EditFields["Edit Fields"]:::core
+    LanuaggeDetection["Lanuagge Detection"]:::ai --> ShoppingAgent["Shopping Agent"]:::ai
+    EditFields["Edit Fields"]:::core --> LanuaggeDetection["Lanuagge Detection"]:::ai
+    ShoppingAgent["Shopping Agent"]:::ai --> CodeinJavaScript["Code in JavaScript"]:::core
+    Switch["Switch"]:::core --> SeacrhProducts1["Seacrh Products1"]:::core
+    Switch["Switch"]:::core --> Merge["Merge"]:::core
+    Switch["Switch"]:::core --> SeacrhProducts["Seacrh Products"]:::core
+    Switch["Switch"]:::core --> GeneralQuery["General Query"]:::ai
+    GeneralQuery["General Query"]:::ai --> RespondtoWebhook["Respond to Webhook"]:::trigger
+    CodeinJavaScript["Code in JavaScript"]:::core --> Switch["Switch"]:::core
+    SeacrhProducts["Seacrh Products"]:::core --> If["If"]:::core
+    GiveFIndProdcutANSWER["Give FInd Prodcut ANSWER"]:::ai --> RespondtoWebhook["Respond to Webhook"]:::trigger
+    If["If"]:::core --> GiveFIndProdcutANSWER["Give FInd Prodcut ANSWER"]:::ai
+    If["If"]:::core --> whennoProductFound["when no Product Found"]:::core
+    whennoProductFound["when no Product Found"]:::core --> RespondtoWebhook["Respond to Webhook"]:::trigger
+    SeacrhProducts1["Seacrh Products1"]:::core --> Merge["Merge"]:::core
+    AddtoCartRequest["Add to Cart Request"]:::core --> ProductaddedtocartSuccessfully["Product added to cart Successfully"]:::core
+    AddtoCartRequest["Add to Cart Request"]:::core --> Productalreadyexistincart["Product already exist in cart"]:::core
+    Merge["Merge"]:::core --> Makepayload["Make payload"]:::core
+    Makepayload["Make payload"]:::core --> AddtoCartRequest["Add to Cart Request"]:::core
+    Productalreadyexistincart["Product already exist in cart"]:::core --> RespondtoWebhook["Respond to Webhook"]:::trigger
+    ProductaddedtocartSuccessfully["Product added to cart Successfully"]:::core --> RespondtoWebhook["Respond to Webhook"]:::trigger

@@ -1,0 +1,38 @@
+%%{init: {"theme": "base", "themeVariables": {"darkMode": true, "background": "#1e1e24", "primaryColor": "#2b2b35", "primaryTextColor": "#fff", "primaryBorderColor": "#555", "lineColor": "#888"}}}%%
+graph TD
+    classDef default fill:#2b2b35,stroke:#555,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef trigger fill:#234a36,stroke:#3bb46e,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef ai fill:#3d235e,stroke:#8e55ea,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef core fill:#1a3d5c,stroke:#3b82f6,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef alert fill:#5c2b29,stroke:#ef4444,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    AITriage["AI Triage"]:::ai --> FinalReport["Final Report"]:::core
+    Approved["Approved?"]:::core --> CreateRemediationIssue["Create Remediation Issue"]:::core
+    Approved["Approved?"]:::core --> DismissedTimedout["Dismissed / Timed out"]:::core
+    CheckRepo["Check Repo"]:::core --> RepoOK["Repo OK?"]:::core
+    ConsolidateFindings["Consolidate Findings"]:::core --> NeedsAITriage["Needs AI Triage?"]:::core
+    CreateRemediationIssue["Create Remediation Issue"]:::core --> SlackIssueResult["Slack: Issue Result"]:::alert
+    ErrorResult["Error Result"]:::core --> RespondError["Respond Error"]:::trigger
+    FetchCommit["Fetch Commit"]:::core --> ScanHistory["Scan History"]:::core
+    FetchFile["Fetch File"]:::core --> ScanContents["Scan Contents"]:::core
+    FinalReport["Final Report"]:::core --> RespondWithReport["Respond With Report"]:::trigger
+    GetRepoTree["Get Repo Tree"]:::core --> SelectFiles["Select Files"]:::core
+    InputOK["Input OK?"]:::core --> ErrorResult["Error Result"]:::core
+    InputOK["Input OK?"]:::core --> RepoInfo["Repo Info"]:::core
+    ListCommits["List Commits"]:::core --> SelectCommits["Select Commits"]:::core
+    ManualTrigger["Manual Trigger"]:::trigger --> ParseInput["Parse Input"]:::core
+    NeedsAITriage["Needs AI Triage?"]:::core --> AITriage["AI Triage"]:::ai
+    NeedsAITriage["Needs AI Triage?"]:::core --> FinalReport["Final Report"]:::core
+    NeedsApproval["Needs Approval?"]:::core --> WaitforHumanApproval["Wait for Human Approval"]:::core
+    ParseInput["Parse Input"]:::core --> InputOK["Input OK?"]:::core
+    RepoInfo["Repo Info"]:::core --> CheckRepo["Check Repo"]:::core
+    RepoOK["Repo OK?"]:::core --> ErrorResult["Error Result"]:::core
+    RepoOK["Repo OK?"]:::core --> GetRepoTree["Get Repo Tree"]:::core
+    RespondWithReport["Respond With Report"]:::trigger --> SlackReport["Slack Report"]:::alert
+    ScanContents["Scan Contents"]:::core --> ListCommits["List Commits"]:::core
+    ScanHistory["Scan History"]:::core --> ConsolidateFindings["Consolidate Findings"]:::core
+    ScanWebhook["Scan Webhook"]:::trigger --> ParseInput["Parse Input"]:::core
+    SelectCommits["Select Commits"]:::core --> FetchCommit["Fetch Commit"]:::core
+    SelectFiles["Select Files"]:::core --> FetchFile["Fetch File"]:::core
+    SlackReport["Slack Report"]:::alert --> NeedsApproval["Needs Approval?"]:::core
+    TriageModel["Triage Model"]:::ai --> AITriage["AI Triage"]:::ai
+    WaitforHumanApproval["Wait for Human Approval"]:::core --> Approved["Approved?"]:::core

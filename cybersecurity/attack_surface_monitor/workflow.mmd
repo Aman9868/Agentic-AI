@@ -1,0 +1,30 @@
+%%{init: {"theme": "base", "themeVariables": {"darkMode": true, "background": "#1e1e24", "primaryColor": "#2b2b35", "primaryTextColor": "#fff", "primaryBorderColor": "#555", "lineColor": "#888"}}}%%
+graph TD
+    classDef default fill:#2b2b35,stroke:#555,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef trigger fill:#234a36,stroke:#3bb46e,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef ai fill:#3d235e,stroke:#8e55ea,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef core fill:#1a3d5c,stroke:#3b82f6,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    classDef alert fill:#5c2b29,stroke:#ef4444,stroke-width:2px,color:#fff,rx:10px,ry:10px;
+    AIBriefing["AI Briefing"]:::ai --> BuildSlackMessage["Build Slack Message"]:::core
+    AlertNeeded["Alert Needed?"]:::core --> AIBriefing["AI Briefing"]:::ai
+    AlertNeeded["Alert Needed?"]:::core --> NoAlertnothingchanged["No Alert (nothing changed)"]:::core
+    AnalyzeDiff["Analyze & Diff"]:::core --> AlertNeeded["Alert Needed?"]:::core
+    BuildInventory["Build Inventory"]:::core --> RespondInventory["Respond Inventory"]:::trigger
+    BuildSlackMessage["Build Slack Message"]:::core --> SendSlackAlert["Send Slack Alert"]:::alert
+    CertSpotterDiscovery["CertSpotter Discovery"]:::core --> ExtractSubdomains["Extract Subdomains"]:::core
+    DMARCLookup["DMARC Lookup"]:::core --> SPFLookup["SPF Lookup"]:::core
+    DNSLookup["DNS Lookup"]:::core --> MergeDNS["Merge DNS"]:::core
+    DailySchedule["Daily Schedule"]:::trigger --> PostgresReadAssets["Postgres Read Assets"]:::core
+    ExtractSubdomains["Extract Subdomains"]:::core --> HasHosts["Has Hosts?"]:::core
+    GroqChatModel["Groq Chat Model"]:::ai --> AIBriefing["AI Briefing"]:::ai
+    HasHosts["Has Hosts?"]:::core --> AnalyzeDiff["Analyze & Diff"]:::core
+    HasHosts["Has Hosts?"]:::core --> DNSLookup["DNS Lookup"]:::core
+    InventoryWebhook["Inventory Webhook"]:::trigger --> BuildInventory["Build Inventory"]:::core
+    IsDomain["Is Domain?"]:::core --> DMARCLookup["DMARC Lookup"]:::core
+    IsDomain["Is Domain?"]:::core --> ShodanInternetDB["Shodan InternetDB"]:::core
+    ManualTrigger["Manual Trigger"]:::trigger --> PostgresReadAssets["Postgres Read Assets"]:::core
+    MergeDNS["Merge DNS"]:::core --> ShodanInternetDB["Shodan InternetDB"]:::core
+    PostgresReadAssets["Postgres Read Assets"]:::core --> IsDomain["Is Domain?"]:::core
+    SPFLookup["SPF Lookup"]:::core --> crtshDiscovery["crt.sh Discovery"]:::core
+    ShodanInternetDB["Shodan InternetDB"]:::core --> ProbeHTTPS["Probe HTTPS"]:::core
+    crtshDiscovery["crt.sh Discovery"]:::core --> CertSpotterDiscovery["CertSpotter Discovery"]:::core
